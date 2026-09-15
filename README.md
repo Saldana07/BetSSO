@@ -527,10 +527,48 @@ correcto es la dispersión de P(resultado | λ) *a través de los λ muestreados
 La semilla es el `match_id`, para que el resultado sea reproducible entre
 recargas.
 
+## Pasada de QA y pulido
+
+Revisión completa: 59 tests automatizados, los 9 endpoints (incluidos 404 y
+422 con mensajes claros), y la UI en escritorio, móvil (375 px) y modo claro.
+Lo que apareció y se corrigió:
+
+**Bug real en el filtro de seguridad de picks.** Exigía `accuracy >= 0.55`,
+y eso **rechazaba córners 9.5 (+1.0 pts de habilidad) y aceptaba córners 8.5
+(+0.6)**: elegía la línea con menos habilidad solo porque su tasa base era
+más alta. Hoy había 4 partidos con cuotas de 9.5 en rango y producía cero
+candidatos. Ahora [`is_safe_bet_candidate`](backend/ml/value_betting/ev_kelly.py)
+usa habilidad (accuracy − base), igual que la etiqueta de confianza, y
+**exige que el mercado tenga backtest** — antes `None` pasaba en silencio y
+BTTS / Over 2.5 generaban picks sin ninguna validación (el hueco abierto de
+la auditoría). Con tests.
+
+**Piso de EV del 2%.** Un pick con +0.7% de EV no es una recomendación: no
+cubre ni el movimiento normal de la línea. Coincide con el piso de "MEDIA".
+
+**Reconciliación persistente.** El equipo canónico hereda el `api_team_id`
+(y la liga el `api_league_id`), así que `sync_fixtures` los encuentra directo
+y ya no recrea duplicados. Probado: tras fusionar 35 equipos, un re-sync deja
+0 por reconciliar y los picks conservan su historial.
+
+**`daily.bat`.** Los 6 pasos del flujo diario (resultados de ayer → liquidar
+→ partidos de hoy → reconciliar → cuotas → picks) en un solo doble clic, con
+la fecha UTC correcta.
+
+**Detalles de UI.** La tabla de candidatos mostraba "Menos de" sin la línea;
+"1 picks"; el fondo seguía haciendo scroll con el modal abierto.
+
 ## Pendiente (próximos pasos)
 
-- Conector football-data.co.uk como fuente complementaria/histórica (útil
-  para entrenar, dado que API-Football Free no da histórico de ligas top).
-- Migraciones Alembic (`alembic init`) generadas desde `app/models.py`.
-- Frontend React (Vite + Tailwind) consumiendo `/api/predictions/daily-pick`.
-- Scheduler del job diario (APScheduler o cron del sistema operativo).
+- **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
+  cierre (`OddHome/OddDraw/OddAway`, `Over25/Under25`) para 122k partidos.
+  Todo backtest hasta ahora fue contra un mercado *simulado* (538 + margen);
+  este respondería "¿le gana al mercado de verdad?" con miles de apuestas.
+  Es el paso más importante que queda.
+- Validar BTTS y Over/Under de goles (hoy no generan picks porque no tienen
+  backtest — correcto, pero limita la cobertura).
+- Migraciones Alembic; hoy son `ALTER TABLE` a mano y `schema.sql` puede
+  divergir de la BD real.
+- `elo_history` / `teams.elo_rating` nunca se escriben: el Elo se recalcula
+  desde cero en cada predicción (O(n²); hoy ~3 s, se degradará con más ligas).
+- Scheduler (APScheduler o Programador de tareas de Windows) para `daily.bat`.

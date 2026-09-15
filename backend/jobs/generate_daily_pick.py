@@ -167,10 +167,11 @@ def run(model_probabilities_fn):
                     if not is_safe_bet_candidate(
                         odds=float(odds_row.odds_value),
                         expected_val=bet.expected_value,
-                        historical_accuracy=hist_accuracy,
+                        historical_skill=evidence.skill,
                         odds_min=settings.odds_min,
                         odds_max=settings.odds_max,
-                        min_historical_accuracy=settings.min_historical_accuracy,
+                        min_ev=settings.min_pick_ev,
+                        min_historical_skill=settings.min_historical_skill,
                         max_ev=settings.max_plausible_ev,
                     ):
                         continue

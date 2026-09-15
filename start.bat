@@ -49,11 +49,8 @@ echo   - API:       http://127.0.0.1:8000/docs
 echo   - Frontend:  http://localhost:5173
 echo ============================================
 echo.
-echo Para generar/actualizar el pick del dia, corre en otra terminal:
-echo   cd backend
-echo   .venv\Scripts\python.exe -m ml.ingestion.sync_fixtures --date AAAA-MM-DD
-echo   .venv\Scripts\python.exe -m ml.ingestion.sync_odds --date AAAA-MM-DD --snapshot-type LIVE
-echo   .venv\Scripts\python.exe -m jobs.generate_daily_pick
+echo Para liquidar los picks de ayer y generar los de hoy, ejecuta daily.bat
+echo (hace los 6 pasos en orden con la fecha correcta).
 echo.
 
 start "" "http://localhost:5173"

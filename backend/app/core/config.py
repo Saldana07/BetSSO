@@ -11,7 +11,11 @@ class Settings(BaseSettings):
     odds_min: float = 1.50
     odds_max: float = 2.00
     kelly_fraction_cap: float = 0.25       # Kelly fraccional (1/4 Kelly) por gestión de riesgo
-    min_historical_accuracy: float = 0.55  # umbral para considerar un mercado "seguro"
+    # Habilidad mínima (accuracy - tasa base) demostrada en backtest para que
+    # un mercado genere picks. 0.0 = al menos no peor que apostar a ciegas.
+    # Antes era accuracy cruda >= 0.55, que no es comparable entre mercados y
+    # rechazaba la línea de córners con MÁS habilidad.
+    min_historical_skill: float = 0.0
     model_version: str = "v1"
     top_picks_count: int = 5  # cuántos "picks del día" se muestran (top N por EV, máx. 1 por partido)
 
@@ -26,6 +30,9 @@ class Settings(BaseSettings):
     # Las cuotas son perecederas: calcular EV sobre un precio de hace horas
     # produce una ventaja que ya no se puede tomar.
     max_odds_age_hours: float = 6.0
+    # EV mínimo para que algo cuente como pick. Un +0.7% no es una recomendación:
+    # no cubre ni el movimiento normal de la línea. Coincide con el piso de "MEDIA".
+    min_pick_ev: float = 0.02
 
 
 @lru_cache

@@ -61,7 +61,8 @@ def run_backtest(
         if not is_safe_bet_candidate(
             odds=row["bookmaker_odds"],
             expected_val=bet.expected_value,
-            historical_accuracy=None,  # el backtest ES el que produce la accuracy histórica
+            historical_skill=None,
+            require_validation=False,  # el backtest ES el que produce la evidencia de habilidad
             odds_min=config.odds_min,
             odds_max=config.odds_max,
             min_ev=config.min_ev,

@@ -55,15 +55,26 @@ def evaluate_bet(model_probability: float, odds: float, fraction_cap: float = 0.
 def is_safe_bet_candidate(
     odds: float,
     expected_val: float,
-    historical_accuracy: float | None,
+    historical_skill: float | None,
     odds_min: float = 1.50,
     odds_max: float = 2.00,
     min_ev: float = 0.0,
-    min_historical_accuracy: float = 0.55,
+    min_historical_skill: float = 0.0,
     max_ev: float | None = None,
+    require_validation: bool = True,
 ) -> bool:
     """Filtro estricto para el pick del día: rango de cuota + EV positivo +
-    accuracy histórica mínima + techo de EV plausible.
+    habilidad demostrada en el mercado + techo de EV plausible.
+
+    Habilidad, no accuracy. La versión anterior exigía `accuracy >= 0.55`, y
+    eso rechazaba córners 9.5 (accuracy 53%, pero +1.0 pts sobre su base) y
+    aceptaba córners 8.5 (60%, pero solo +0.6 pts): elegía la línea con MENOS
+    habilidad solo porque su tasa base era más alta. La accuracy cruda no es
+    comparable entre mercados; la habilidad (accuracy - base) sí.
+
+    `require_validation`: un mercado sin backtest no tiene habilidad conocida
+    y no debe generar picks. Antes `None` pasaba el filtro en silencio, justo
+    donde menos sabíamos.
 
     El techo (`max_ev`) es contraintuitivo pero esencial: en un mercado
     líquido, una ventaja real vive entre +2% y +8%. Si nuestro modelo dice
@@ -79,6 +90,6 @@ def is_safe_bet_candidate(
         return False
     if max_ev is not None and expected_val > max_ev:
         return False
-    if historical_accuracy is not None and historical_accuracy < min_historical_accuracy:
-        return False
-    return True
+    if historical_skill is None:
+        return not require_validation
+    return historical_skill >= min_historical_skill

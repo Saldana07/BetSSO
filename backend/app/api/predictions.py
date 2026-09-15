@@ -236,7 +236,7 @@ def get_daily_candidates(
         .where(
             Prediction.bookmaker_odds >= settings.odds_min,
             Prediction.bookmaker_odds <= settings.odds_max,
-            Prediction.expected_value > 0,
+            Prediction.expected_value >= settings.min_pick_ev,
             Match.kickoff_utc >= today_start,
             Match.kickoff_utc < today_end,
         )

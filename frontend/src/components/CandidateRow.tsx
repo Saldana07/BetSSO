@@ -1,6 +1,6 @@
 import type { DailyCandidate } from '../types'
-import { MARKET_LABELS, SELECTION_LABELS } from '../types'
 import { ConfidenceBadge } from './ConfidenceBadge'
+import { formatMarket, formatSelection } from './MarketLabel'
 
 export function CandidateRow({ candidate }: { candidate: DailyCandidate }) {
   const evPct = (candidate.expected_value * 100).toFixed(1)
@@ -14,11 +14,13 @@ export function CandidateRow({ candidate }: { candidate: DailyCandidate }) {
         <p className="text-xs text-slate-500 dark:text-slate-400">{candidate.league}</p>
       </td>
       <td className="py-3 pr-4 text-sm text-slate-700 dark:text-slate-300">
-        {MARKET_LABELS[candidate.market] ?? candidate.market} ·{' '}
-        {SELECTION_LABELS[candidate.selection] ?? candidate.selection}
+        {formatMarket(candidate.market)} · {formatSelection(candidate.market, candidate.selection)}
       </td>
       <td className="py-3 pr-4 text-sm font-medium text-slate-900 dark:text-slate-100">
         {candidate.bookmaker_odds.toFixed(2)}
+        {candidate.bookmaker && (
+          <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">{candidate.bookmaker}</span>
+        )}
       </td>
       <td className="py-3 pr-4 text-sm font-medium text-emerald-600 dark:text-emerald-400">+{evPct}%</td>
       <td className="py-3">

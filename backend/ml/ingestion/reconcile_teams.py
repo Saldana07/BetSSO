@@ -24,7 +24,7 @@ Uso:
 import argparse
 import unicodedata
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.database import SessionLocal
 from app.models import League, Match, Team
@@ -71,7 +71,7 @@ def normalize(name: str) -> str:
 
 def reconcile(apply_changes: bool = False) -> dict:
     db = SessionLocal()
-    stats = {"leagues_matched": 0, "teams_matched": 0, "teams_unmatched": 0, "matches_repointed": 0}
+    stats = {"leagues_matched": 0, "teams_matched": 0, "teams_unmatched": 0, "matches_repointed": 0, "teams_merged": 0}
     try:
         for (live_name, live_country), historical_name in LEAGUE_MAP.items():
             live_league = db.execute(
@@ -123,6 +123,34 @@ def reconcile(apply_changes: bool = False) -> dict:
                     match.league_id = historical_league.id
                     stats["matches_repointed"] += 1
 
+                # Hace la reconciliación PERSISTENTE: el equipo canónico hereda el
+                # api_team_id, así el próximo sync_fixtures lo encuentra directo y
+                # no vuelve a crear el duplicado (antes había que re-ejecutar esto
+                # tras cada sync o los picks perdían el historial en silencio).
+                if live_team.api_team_id is not None and canonical.api_team_id is None:
+                    api_id = live_team.api_team_id
+                    live_team.api_team_id = None
+                    db.flush()  # libera la restricción única antes de reasignar
+                    canonical.api_team_id = api_id
+                    db.delete(live_team)
+                    stats["teams_merged"] += 1
+
+            # Lo mismo para la liga: con el api_league_id en la liga canónica, los
+            # partidos nuevos nacen ya en el namespace del histórico.
+            if apply_changes and live_league.api_league_id is not None and historical_league.api_league_id is None:
+                api_id = live_league.api_league_id
+                live_league.api_league_id = None
+                db.flush()
+                historical_league.api_league_id = api_id
+                db.flush()
+                still_referenced = db.execute(
+                    select(func.count(Team.id)).where(Team.league_id == live_league.id)
+                ).scalar_one() or db.execute(
+                    select(func.count(Match.id)).where(Match.league_id == live_league.id)
+                ).scalar_one()
+                if not still_referenced:
+                    db.delete(live_league)
+
         if apply_changes:
             db.commit()
         else:
@@ -145,6 +173,7 @@ def main():
     print(f"Equipos reconciliados: {stats['teams_matched']}")
     print(f"Equipos sin histórico: {stats['teams_unmatched']}")
     print(f"Partidos repuntados:   {stats['matches_repointed']}")
+    print(f"Equipos fusionados:    {stats['teams_merged']}  (heredan api_team_id: no se recrean en el próximo sync)")
 
 
 if __name__ == "__main__":

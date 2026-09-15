@@ -22,7 +22,7 @@ export function PerformanceBar({ performance }: { performance: Performance }) {
           Resultado real
         </span>
         <span className="text-sm text-slate-700 dark:text-slate-300">
-          {settled_picks} picks · {wins}G / {losses}P
+          {settled_picks} {settled_picks === 1 ? 'pick' : 'picks'} · {wins}G / {losses}P
         </span>
         <span className="text-sm text-slate-700 dark:text-slate-300">
           Acierto <strong>{((hit_rate ?? 0) * 100).toFixed(0)}%</strong>
