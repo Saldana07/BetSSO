@@ -18,6 +18,9 @@ class BacktestConfig:
     odds_min: float = 1.50
     odds_max: float = 2.00
     min_ev: float = 0.0
+    # Mismo techo que producción (settings.max_plausible_ev): un backtest que
+    # apostara EVs de +40% mediría una estrategia que el job real nunca ejecuta.
+    max_ev: float | None = 0.20
     starting_bankroll: float = 100.0  # capital inicial normalizado
     stake_unit: float = 1.0  # 1% del bankroll inicial por apuesta (staking plano) — nunca igual al bankroll total
     kelly_fraction_cap: float = 0.25
@@ -66,6 +69,7 @@ def run_backtest(
             odds_min=config.odds_min,
             odds_max=config.odds_max,
             min_ev=config.min_ev,
+            max_ev=config.max_ev,
         ):
             continue
 

@@ -558,6 +558,61 @@ la fecha UTC correcta.
 **Detalles de UI.** La tabla de candidatos mostraba "Menos de" sin la línea;
 "1 picks"; el fondo seguía haciendo scroll con el modal abierto.
 
+## Backtest contra cuotas reales: el modelo NO le gana al mercado
+
+Este es el resultado más importante del proyecto. Hasta aquí todo backtest
+había sido contra un mercado *simulado* (probabilidades de 538 + un margen
+inventado). [real_odds_backtest.py](backend/ml/backtesting/real_odds_backtest.py)
+usa las **cuotas reales de cierre** de football-data.co.uk sobre **28,512
+partidos posteriores al entrenamiento** (julio 2023 → septiembre 2026, 38
+ligas), con features calculadas por el mismo `FeatureReplayer` que el
+entrenamiento (refactor verificado bit a bit) y el modelo de producción tal
+cual, sin reentrenar.
+
+**¿Quién sabe más?** Brier del modelo 0.6143, del mercado 0.5996. Acierto
+48.6% vs 50.2%. **El mercado está mejor calibrado: sabe más que nosotros.**
+
+| Mercado | Precio | n | Habilidad | Yield |
+|---|---|---|---|---|
+| 1X2 local | promedio de casas | 1,645 | −2.6 pts | **−4.6%** |
+| 1X2 local | mejor precio | 1,966 | −1.0 | −1.8% |
+| 1X2 visitante | promedio | 310 | −6.3 | −11.7% |
+| Over 2.5 | promedio | 2,706 | −2.4 | −4.5% |
+| Over 2.5 | mejor precio | 3,241 | −0.1 | −0.3% |
+| Under 2.5 | promedio | 2,119 | −2.4 | −4.5% |
+
+Las ocho combinaciones tienen yield negativo. Con el mejor precio el modelo
+se acerca al empate: **sigue al mercado y pierde exactamente el margen**. No
+tiene ventaja; es un modelo que replica la opinión de las casas con más
+ruido.
+
+**Lección metodológica:** el backtest simulado daba +3.9% de yield en 1X2;
+el real da −4.6%. Ocho puntos de diferencia. Las probabilidades de 538 más
+un margen plano son un adversario mucho más débil que una línea de cierre
+real — que ya incorpora alineaciones, lesiones, dinero informado y todo lo
+que nuestro modelo no ve. Un backtest contra un mercado simulado puede
+aprobar un modelo que pierde dinero.
+
+**Consecuencias aplicadas:**
+- La evidencia real se persistió y sustituye a la simulada: con habilidad
+  negativa, el filtro **ya no emite picks de 1X2 ni Over/Under 2.5**.
+- La fila simulada de Doble Oportunidad se retiró: deriva de las mismas
+  probabilidades que fallaron y no hay cuotas reales para validarla.
+- Los únicos picks que quedan son de **córners**, cuya validación es de
+  calibración (no contra cuotas reales de córners, que no tenemos). Su
+  habilidad (+0.6 / +1.0 pts) es *menor* que la que 1X2 mostraba contra el
+  mercado simulado antes de fallar contra el real. Deben tratarse como
+  **paper trading**: la única forma de validarlos es acumular liquidaciones
+  reales.
+
+**Lo que esto significa para el proyecto:** la infraestructura es sólida y
+honesta — mide, liquida, se abstiene y ahora sabe que no tiene ventaja. Lo
+que falta es un modelo con información que el mercado no tenga. Con Elo,
+Poisson y forma calculados desde resultados públicos, eso no existe: las
+casas ya tienen todo eso y más. Para tener ventaja real haría falta o
+información privilegiada (alineaciones antes de que se muevan las líneas,
+datos de tracking) o mercados menos eficientes que el 1X2 de ligas grandes.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
