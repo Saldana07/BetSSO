@@ -490,6 +490,43 @@ modelo actual "aprobara" — eso sería el mismo engaño con otro número.
 Los backtests ahora se persisten con `--persist` (antes se insertaban a
 mano), así que la tabla es reproducible.
 
+## Simulación de Montecarlo (pestaña en el detalle del partido)
+
+`GET /api/predictions/{match_id}/simulation` corre 10,000 simulaciones del
+partido ([monte_carlo.py](backend/ml/simulation/monte_carlo.py), 7 tests) y
+el frontend las muestra en una pestaña "Simulación Montecarlo" dentro del
+detalle de cada pick (clic en la tarjeta), separada de la vista general.
+
+**Por qué no es "una Poisson muestreada 10,000 veces".** Eso daría, salvo
+ruido de muestreo (±0.5%), exactamente las mismas probabilidades que ya
+calcula `market_probabilities()` en forma cerrada; comparar eso con el modelo
+base y llamar "valor" a la diferencia sería una ilusión estadística. Lo que
+sí aporta:
+
+- **Incertidumbre sobre la fuerza de los equipos.** Cada corrida muestrea los
+  goles esperados de una Gamma centrada en la estimación cuya dispersión
+  decrece con el historial (mezcla Gamma-Poisson = Binomial Negativa). Con 5
+  partidos de historial, P(local) cae entre **14% y 73%**; con 50, entre 31%
+  y 52%. Ese intervalo es lo que la fórmula cerrada no da, y es la
+  visualización más honesta del problema del cold start.
+- **Distribución completa** de goles totales y marcadores más probables.
+
+**Cómo leer la comparación (y qué NO es valor).** La pestaña muestra tres
+estimaciones: Montecarlo, el clasificador XGBoost (un modelo *distinto*: la
+Poisson es solo una de sus features) y el mercado sin margen. Que dos modelos
+nuestros discrepen mide **incertidumbre**, no valor; el valor solo existe
+contra el mercado. La conclusión solo señala "candidato a apuesta de valor"
+cuando **ambos** modelos superan al mercado en ≥3 pts *y* coinciden entre sí
+(desacuerdo ≤8 pts). Si discrepan, lo dice y no habla de valor aunque uno de
+los dos supere al mercado.
+
+Un detalle de implementación que el test descubrió: el primer intervalo de
+confianza hacía bootstrap sobre los resultados simulados, lo que solo mide el
+ruido de Montecarlo (~0.5%) y no cambiaba con el historial. El intervalo
+correcto es la dispersión de P(resultado | λ) *a través de los λ muestreados*.
+La semilla es el `match_id`, para que el resultado sea reproducible entre
+recargas.
+
 ## Pendiente (próximos pasos)
 
 - Conector football-data.co.uk como fuente complementaria/histórica (útil

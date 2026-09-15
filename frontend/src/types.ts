@@ -38,6 +38,50 @@ export interface Performance {
 /** Por debajo de esto, los porcentajes son ruido estadístico, no evidencia. */
 export const MIN_PICKS_FOR_SIGNIFICANCE = 30
 
+export interface OutcomeProbs {
+  HOME: number
+  DRAW: number
+  AWAY: number
+}
+
+export interface ValueCandidate {
+  outcome: 'HOME' | 'DRAW' | 'AWAY'
+  market_fair: number
+  monte_carlo: number
+  classifier: number
+  edge_min: number
+}
+
+export interface Simulation {
+  match_id: number
+  home_team: string
+  away_team: string
+  n_simulations: number
+  home_history: number
+  away_history: number
+  expected_home_goals: number
+  expected_away_goals: number
+  monte_carlo: OutcomeProbs
+  ci_home: [number, number]
+  ci_draw: [number, number]
+  ci_away: [number, number]
+  total_goals_distribution: Record<string, number>
+  top_scorelines: [string, number][]
+  p_over_2_5: number
+  p_btts: number
+  classifier: OutcomeProbs
+  market_fair: OutcomeProbs | null
+  model_disagreement: number
+  value_candidates: ValueCandidate[]
+  conclusion: string
+}
+
+export const OUTCOME_LABELS: Record<keyof OutcomeProbs, string> = {
+  HOME: 'Victoria local',
+  DRAW: 'Empate',
+  AWAY: 'Victoria visitante',
+}
+
 export const MARKET_LABELS: Record<string, string> = {
   '1X2': 'Ganador del partido',
   DOUBLE_CHANCE: 'Doble oportunidad',

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ApiError, getDailyCandidates, getPerformance, getTopPicks } from './api'
 import { CandidateRow } from './components/CandidateRow'
 import { ConfidenceFilter } from './components/ConfidenceFilter'
+import { MatchDetail } from './components/MatchDetail'
 import { PerformanceBar } from './components/PerformanceBar'
 import { PickOfTheDayCard } from './components/PickOfTheDayCard'
 import type { ConfidenceLevel, DailyCandidate, Performance, PickOfTheDay } from './types'
@@ -17,6 +18,7 @@ function App() {
   const [picksState, setPicksState] = useState<PicksState>({ status: 'loading' })
   const [candidates, setCandidates] = useState<DailyCandidate[]>([])
   const [performance, setPerformance] = useState<Performance | null>(null)
+  const [selected, setSelected] = useState<PickOfTheDay | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
@@ -111,7 +113,12 @@ function App() {
         {picksState.status === 'ready' && (
           <div className="space-y-4">
             {picksState.picks.map((pick, i) => (
-              <PickOfTheDayCard key={`${pick.match_id}-${pick.market}-${pick.selection}`} pick={pick} rank={i + 1} />
+              <PickOfTheDayCard
+                key={`${pick.match_id}-${pick.market}-${pick.selection}`}
+                pick={pick}
+                rank={i + 1}
+                onOpen={() => setSelected(pick)}
+              />
             ))}
           </div>
         )}
@@ -142,6 +149,8 @@ function App() {
           </div>
         )}
       </main>
+
+      {selected && <MatchDetail pick={selected} onClose={() => setSelected(null)} />}
     </div>
   )
 }

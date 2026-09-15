@@ -8,7 +8,17 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.database import get_db
 from app.models import Match, Prediction
-from app.schemas import DailyCandidateResponse, PerformanceResponse, PickOfTheDayResponse
+from app.models import Odds
+from app.schemas import (
+    DailyCandidateResponse,
+    OutcomeProbs,
+    PerformanceResponse,
+    PickOfTheDayResponse,
+    SimulationResponse,
+    ValueCandidate,
+)
+from ml.serving.predict import get_models, match_context
+from ml.simulation.monte_carlo import compare_with, simulate_match
 from ml.value_betting.confidence import SkillEvidence, confidence_label
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
@@ -100,6 +110,74 @@ def get_top_picks(
         raise HTTPException(status_code=404, detail=detail)
 
     return responses
+
+
+def _best_1x2_odds(db: Session, match_id: int, settings: Settings) -> dict[str, float] | None:
+    """Mejor cuota por selección del snapshot 1X2 más reciente (y no vencido)."""
+    latest = db.execute(
+        select(func.max(Odds.recorded_at)).where(
+            Odds.match_id == match_id, Odds.market == "1X2", Odds.snapshot_type == "LIVE"
+        )
+    ).scalar_one_or_none()
+    if latest is None:
+        return None
+    if (datetime.now(timezone.utc) - latest).total_seconds() / 3600 > settings.max_odds_age_hours:
+        return None
+
+    rows = db.execute(
+        select(Odds.selection, func.max(Odds.odds_value))
+        .where(Odds.match_id == match_id, Odds.market == "1X2", Odds.recorded_at == latest)
+        .group_by(Odds.selection)
+    ).all()
+    odds = {selection: float(value) for selection, value in rows}
+    return odds if {"HOME", "DRAW", "AWAY"} <= odds.keys() else None
+
+
+@router.get("/{match_id}/simulation", response_model=SimulationResponse)
+def get_simulation(
+    match_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """10,000 simulaciones de Montecarlo del partido con incertidumbre sobre la
+    fuerza de los equipos, comparadas con el clasificador y con el mercado.
+
+    La semilla es el match_id: el resultado es reproducible entre recargas
+    (si no, los % bailarían ±0.5% cada vez y parecería que algo cambió).
+    """
+    match = db.get(Match, match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Partido no encontrado.")
+
+    ctx = match_context(db, match, get_models(model_version=settings.model_version))
+    sim = simulate_match(
+        ctx.lambda_home, ctx.lambda_away, ctx.home_history, ctx.away_history, seed=match_id
+    )
+    comparison = compare_with(sim, ctx.classifier, _best_1x2_odds(db, match_id, settings))
+
+    return SimulationResponse(
+        match_id=match.id,
+        home_team=match.home_team.name,
+        away_team=match.away_team.name,
+        n_simulations=sim.n_simulations,
+        home_history=ctx.home_history,
+        away_history=ctx.away_history,
+        expected_home_goals=sim.expected_home_goals,
+        expected_away_goals=sim.expected_away_goals,
+        monte_carlo=OutcomeProbs(**comparison.monte_carlo),
+        ci_home=sim.ci_home,
+        ci_draw=sim.ci_draw,
+        ci_away=sim.ci_away,
+        total_goals_distribution=sim.total_goals_distribution,
+        top_scorelines=sim.top_scorelines,
+        p_over_2_5=sim.p_over_2_5,
+        p_btts=sim.p_btts,
+        classifier=OutcomeProbs(**comparison.classifier),
+        market_fair=OutcomeProbs(**comparison.market_fair) if comparison.market_fair else None,
+        model_disagreement=comparison.model_disagreement,
+        value_candidates=[ValueCandidate(**c) for c in comparison.value_candidates],
+        conclusion=comparison.conclusion,
+    )
 
 
 @router.get("/performance", response_model=PerformanceResponse)

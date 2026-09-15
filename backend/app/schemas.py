@@ -32,6 +32,49 @@ class DailyCandidateResponse(PickOfTheDayResponse):
     is_pick_of_day: bool
 
 
+class OutcomeProbs(BaseModel):
+    HOME: float
+    DRAW: float
+    AWAY: float
+
+
+class ValueCandidate(BaseModel):
+    outcome: str
+    market_fair: float
+    monte_carlo: float
+    classifier: float
+    edge_min: float
+
+
+class SimulationResponse(BaseModel):
+    """Resultado de 10,000 simulaciones de Montecarlo con incertidumbre sobre
+    la fuerza de los equipos, y su comparación con el clasificador y el mercado."""
+
+    match_id: int
+    home_team: str
+    away_team: str
+    n_simulations: int
+    home_history: int
+    away_history: int
+    expected_home_goals: float
+    expected_away_goals: float
+    monte_carlo: OutcomeProbs
+    # Intervalos al 90%: reflejan cuánto podría moverse cada % por lo poco o
+    # mucho que sabemos de los equipos. Se estrechan con más historial.
+    ci_home: tuple[float, float]
+    ci_draw: tuple[float, float]
+    ci_away: tuple[float, float]
+    total_goals_distribution: dict[int, float]
+    top_scorelines: list[tuple[str, float]]
+    p_over_2_5: float
+    p_btts: float
+    classifier: OutcomeProbs
+    market_fair: OutcomeProbs | None
+    model_disagreement: float
+    value_candidates: list[ValueCandidate]
+    conclusion: str
+
+
 class PerformanceResponse(BaseModel):
     """Desempeño REAL de los picks ya liquidados (no el backtest simulado)."""
 

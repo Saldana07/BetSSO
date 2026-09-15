@@ -10,13 +10,29 @@ function formatKickoff(iso: string): string {
   })
 }
 
-export function PickOfTheDayCard({ pick, rank }: { pick: PickOfTheDay; rank?: number }) {
+export function PickOfTheDayCard({
+  pick,
+  rank,
+  onOpen,
+}: {
+  pick: PickOfTheDay
+  rank?: number
+  onOpen?: () => void
+}) {
   const evPct = (pick.expected_value * 100).toFixed(1)
   const modelPct = (pick.model_probability * 100).toFixed(1)
   const impliedPct = (pick.implied_probability * 100).toFixed(1)
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+    <div
+      onClick={onOpen}
+      role={onOpen ? 'button' : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      onKeyDown={onOpen ? (e) => (e.key === 'Enter' || e.key === ' ') && onOpen() : undefined}
+      className={`rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900 ${
+        onOpen ? 'cursor-pointer transition-colors hover:border-indigo-300 dark:hover:border-indigo-600' : ''
+      }`}
+    >
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
@@ -68,6 +84,7 @@ export function PickOfTheDayCard({ pick, rank }: { pick: PickOfTheDay; rank?: nu
             ? 'Mercado sin backtest: el modelo no tiene habilidad demostrada aquí.'
             : `Habilidad del modelo en este mercado: ${pick.historical_skill >= 0 ? '+' : ''}${(pick.historical_skill * 100).toFixed(1)} pts sobre la tasa base (${pick.backtest_n_bets} apuestas de backtest)`}
         </p>
+        {onOpen && <p className="text-indigo-500 dark:text-indigo-400">Ver detalle y simulación Montecarlo →</p>}
       </div>
     </div>
   )

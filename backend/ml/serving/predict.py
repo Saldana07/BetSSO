@@ -18,6 +18,8 @@ específicos, sus features de Elo/forma partirán de valores por defecto
 haya historial. Esto es esperado, no un bug.
 """
 from collections import deque
+from dataclasses import dataclass
+from functools import lru_cache
 
 import joblib
 from sqlalchemy import select
@@ -37,6 +39,40 @@ from ml.training.build_dataset import (
     REST_DAYS_CAP,
 )
 from ml.training.train_classifier import FEATURE_COLUMNS
+
+
+@lru_cache(maxsize=1)
+def get_models(model_dir: str = "models", model_version: str = "v1") -> "TrainedModels":
+    """Singleton para la API: cargar los joblib y el CSV de córners (45 MB)
+    en cada request sería inaceptable."""
+    return TrainedModels(model_dir, model_version)
+
+
+@dataclass
+class MatchContext:
+    """Lo que necesita la simulación de Montecarlo, calculado con el estado
+    real de los equipos hasta hoy (misma lógica que las predicciones)."""
+    lambda_home: float
+    lambda_away: float
+    home_history: int
+    away_history: int
+    classifier: dict[str, float]  # {"HOME": p, "DRAW": p, "AWAY": p}
+
+
+def match_context(db: Session, match: Match, models: "TrainedModels") -> MatchContext:
+    features = compute_pre_match_features(db, match)
+    X = [[features[col] for col in FEATURE_COLUMNS]]
+
+    proba = models.classifier.predict_proba(X)[0]
+    idx = {label: i for i, label in enumerate(models.encoder.classes_)}
+
+    return MatchContext(
+        lambda_home=max(float(models.goals_home_model.predict(X)[0]), 0.05),
+        lambda_away=max(float(models.goals_away_model.predict(X)[0]), 0.05),
+        home_history=features["_home_history"],
+        away_history=features["_away_history"],
+        classifier={"HOME": float(proba[idx["H"]]), "DRAW": float(proba[idx["D"]]), "AWAY": float(proba[idx["A"]])},
+    )
 
 
 class TrainedModels:
