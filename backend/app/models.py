@@ -133,6 +133,9 @@ class Prediction(Base):
     market: Mapped[str] = mapped_column(String(30))
     selection: Mapped[str] = mapped_column(String(20))
     model_probability: Mapped[float] = mapped_column(Numeric(6, 4))
+    # Casa de apuestas que ofrecía esta cuota. Sin esto el pick es inaccionable:
+    # la cuota es la MEJOR entre varias casas, y el usuario no sabría dónde ir.
+    bookmaker: Mapped[str | None] = mapped_column(String(60))
     bookmaker_odds: Mapped[float] = mapped_column(Numeric(6, 3))
     implied_probability: Mapped[float] = mapped_column(Numeric(6, 4))
     expected_value: Mapped[float] = mapped_column(Numeric(6, 4))
@@ -140,6 +143,13 @@ class Prediction(Base):
     historical_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 4))
     is_pick_of_day: Mapped[bool] = mapped_column(Boolean, default=False)
     generated_at: Mapped[datetime]
+
+    # --- Liquidación (la llena jobs/settle_predictions.py cuando el partido termina) ---
+    # Sin esto es imposible responder "¿este sistema realmente gana dinero?":
+    # el backtest mide el pasado simulado, esto mide el desempeño real.
+    settled_at: Mapped[datetime | None]
+    is_win: Mapped[bool | None]
+    profit_loss: Mapped[float | None] = mapped_column(Numeric(8, 3))  # a stake plano de 1 unidad
 
     match: Mapped["Match"] = relationship(back_populates="predictions")
 

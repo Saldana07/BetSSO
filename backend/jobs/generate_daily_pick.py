@@ -16,7 +16,7 @@ Flujo:
 """
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -53,12 +53,36 @@ def _todays_matches(db: Session) -> list[Match]:
     return list(db.execute(stmt).scalars().all())
 
 
-def _closing_odds(db: Session, match_id: int, market: str) -> list[Odds]:
+def _latest_odds(db: Session, match_id: int, market: str) -> list[Odds]:
+    """Devuelve SOLO las cuotas del snapshot más reciente de ese mercado.
+
+    Antes esto devolvía todos los snapshots históricos y el job se quedaba con
+    la cuota más alta entre todos ellos — es decir, podía calcular el EV sobre
+    un precio de hace horas que el mercado ya movió y que nadie puede tomar.
+    Las cuotas son perecederas: solo vale la foto más reciente.
+    """
+    latest_recorded_at = db.execute(
+        select(func.max(Odds.recorded_at)).where(
+            Odds.match_id == match_id,
+            Odds.market == market,
+            Odds.snapshot_type == "LIVE",
+        )
+    ).scalar_one_or_none()
+
+    if latest_recorded_at is None:
+        return []
+
+    # Cuotas demasiado viejas tampoco sirven: el mercado ya se movió.
+    age_hours = (datetime.now(timezone.utc) - latest_recorded_at).total_seconds() / 3600
+    if age_hours > settings.max_odds_age_hours:
+        return []
+
     stmt = select(Odds).where(
         Odds.match_id == match_id,
         Odds.market == market,
         Odds.snapshot_type == "LIVE",
-    ).order_by(Odds.recorded_at.desc())
+        Odds.recorded_at == latest_recorded_at,
+    )
     return list(db.execute(stmt).scalars().all())
 
 
@@ -109,7 +133,7 @@ def run(model_probabilities_fn):
                     accuracy_cache[market] = _historical_accuracy(db, market)
                 hist_accuracy = accuracy_cache[market]
 
-                odds_rows = _closing_odds(db, match.id, market)
+                odds_rows = _latest_odds(db, match.id, market)
 
                 # Varias casas de apuestas ofrecen la misma selección con cuotas
                 # distintas; nos quedamos con la MEJOR cuota disponible por
@@ -148,6 +172,7 @@ def run(model_probabilities_fn):
                         market=market,
                         selection=odds_row.selection,
                         model_probability=model_prob,
+                        bookmaker=odds_row.bookmaker,
                         bookmaker_odds=float(odds_row.odds_value),
                         implied_probability=bet.implied_probability,
                         expected_value=bet.expected_value,

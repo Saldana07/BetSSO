@@ -2,13 +2,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.database import get_db
 from app.models import Match, Prediction
-from app.schemas import DailyCandidateResponse, PickOfTheDayResponse
+from app.schemas import DailyCandidateResponse, PerformanceResponse, PickOfTheDayResponse
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
@@ -35,6 +35,7 @@ def _to_response(pred: Prediction, cls=PickOfTheDayResponse):
         kickoff_utc=match.kickoff_utc,
         market=pred.market,
         selection=pred.selection,
+        bookmaker=pred.bookmaker,
         bookmaker_odds=float(pred.bookmaker_odds),
         model_probability=float(pred.model_probability),
         implied_probability=float(pred.implied_probability),
@@ -92,6 +93,42 @@ def get_top_picks(
         raise HTTPException(status_code=404, detail=detail)
 
     return responses
+
+
+@router.get("/performance", response_model=PerformanceResponse)
+def get_performance(db: Session = Depends(get_db)):
+    """Desempeño REAL de los picks recomendados que ya se liquidaron.
+
+    A diferencia del backtest (que simula el pasado), esto mide lo que de
+    verdad pasó con los picks que el sistema emitió. Es la única métrica que
+    responde "¿esto gana dinero?". La llena jobs/settle_predictions.py.
+    """
+    settled = db.execute(
+        select(
+            func.count(Prediction.id),
+            func.count(Prediction.id).filter(Prediction.is_win.is_(True)),
+            func.coalesce(func.sum(Prediction.profit_loss), 0),
+        ).where(Prediction.is_pick_of_day.is_(True), Prediction.settled_at.isnot(None))
+    ).one()
+
+    total, wins, pnl = settled[0], settled[1], float(settled[2])
+
+    pending = db.execute(
+        select(func.count(Prediction.id)).where(
+            Prediction.is_pick_of_day.is_(True), Prediction.settled_at.is_(None)
+        )
+    ).scalar_one()
+
+    return PerformanceResponse(
+        settled_picks=total,
+        wins=wins,
+        losses=total - wins,
+        hit_rate=(wins / total) if total else None,
+        profit_loss_units=round(pnl, 3),
+        # Yield a stake plano de 1 unidad: P&L total / unidades arriesgadas.
+        yield_pct=(pnl / total * 100) if total else None,
+        pending_picks=pending,
+    )
 
 
 @router.get("/daily-candidates", response_model=list[DailyCandidateResponse])

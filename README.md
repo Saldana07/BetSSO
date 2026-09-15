@@ -356,6 +356,51 @@ ascensos/descensos). Es mucho mejor que arrancar en 1500, pero no es un Elo
 al día; se irá actualizando solo a medida que `sync_fixtures.py` acumule
 resultados reales.
 
+## Auditoría: correcciones críticas aplicadas
+
+Una revisión completa encontró cuatro problemas serios, ya corregidos:
+
+**1. No se medía nada.** `predictions` no registraba si un pick ganó o
+perdió, así que era imposible responder *"¿esto gana dinero?"* — la única
+pregunta que importa. El backtest mide el pasado simulado; esto no existía.
+Ahora hay columnas de liquidación (`settled_at`, `is_win`, `profit_loss`),
+un job [settle_predictions.py](backend/jobs/settle_predictions.py) que las
+llena cuando terminan los partidos, un endpoint `/api/predictions/performance`
+y una barra de resultados en el frontend — **con aviso explícito cuando la
+muestra es demasiado pequeña** para significar algo.
+
+**2. El pick era inaccionable.** Decía "cuota 1.65" sin decir en qué casa, y
+esa cuota es la mejor entre ~9 casas. Ahora `predictions.bookmaker` guarda la
+casa y la tarjeta muestra "en Bet365".
+
+**3. Cuotas fantasma.** El job tomaba la cuota más alta entre *todos* los
+snapshots históricos, así que podía calcular EV sobre un precio de hace horas
+que el mercado ya movió. Ahora `_latest_odds` usa solo la foto más reciente y
+descarta cuotas con más de `max_odds_age_hours` (6h) de antigüedad.
+
+**4. Todo el proyecto estaba sin versionar.** Ya está en git, con `.env`
+(que contiene la API key real) correctamente excluido.
+
+También se añadieron los primeros tests: la resolución de apuestas
+([settlement.py](backend/ml/value_betting/settlement.py)) decide si tu
+historial de rentabilidad es real o basura, así que tiene 34 casos cubriendo
+los cuatro mercados y fallando ruidosamente ante un mercado desconocido en
+vez de inventar un resultado.
+
+### Flujo diario completo
+
+```bash
+# 1. Traer resultados de ayer y liquidar los picks emitidos
+python -m ml.ingestion.sync_fixtures --date AYER
+python -m jobs.settle_predictions
+
+# 2. Preparar hoy
+python -m ml.ingestion.sync_fixtures --date HOY
+python -m ml.ingestion.reconcile_teams --apply     # imprescindible: sin esto los picks pierden su historial
+python -m ml.ingestion.sync_odds --date HOY --snapshot-type LIVE
+python -m jobs.generate_daily_pick
+```
+
 ## Pendiente (próximos pasos)
 
 - Conector football-data.co.uk como fuente complementaria/histórica (útil

@@ -17,6 +17,9 @@ import httpx
 from app.core.config import get_settings
 
 BASE_URL = "https://v3.football.api-sports.io"
+# El límite por minuto del plan Free es 10 req/min; esperar algo más de un
+# minuto garantiza que la ventana se haya reiniciado por completo.
+RATE_LIMIT_COOLDOWN_SECONDS = 65
 
 
 class APIFootballError(Exception):
@@ -72,9 +75,11 @@ class APIFootballClient:
                 "Reintenta mañana o sube de plan."
             )
 
-        # Frena proactivamente si el minuto está a punto de agotarse.
-        if self.rate_limit.per_minute_remaining == 0:
-            time.sleep(6)
+        # Frena proactivamente ANTES de agotar la ventana del minuto: esperar
+        # después de chocar cuesta un reintento perdido en cada llamada.
+        if self.rate_limit.per_minute_remaining is not None and self.rate_limit.per_minute_remaining <= 1:
+            time.sleep(RATE_LIMIT_COOLDOWN_SECONDS)
+            self.rate_limit.per_minute_remaining = None
 
         last_error: Exception | None = None
         for attempt in range(max_retries):
@@ -89,9 +94,18 @@ class APIFootballClient:
 
             response.raise_for_status()
             payload = response.json()
+            errors = payload.get("errors")
 
-            if payload.get("errors"):
-                raise APIFootballError(f"API-Football devolvió errores en {endpoint}: {payload['errors']}")
+            if errors:
+                # API-Football NO usa 429 para el límite por minuto: devuelve
+                # HTTP 200 con el aviso dentro de `errors`. Si esto se trata
+                # como un error normal, el backoff nunca se activa y cualquier
+                # sincronización larga revienta a mitad de camino.
+                if isinstance(errors, dict) and "rateLimit" in errors:
+                    time.sleep(RATE_LIMIT_COOLDOWN_SECONDS)
+                    last_error = APIFootballError(f"Límite por minuto alcanzado en {endpoint}")
+                    continue
+                raise APIFootballError(f"API-Football devolvió errores en {endpoint}: {errors}")
 
             return payload.get("response", [])
 

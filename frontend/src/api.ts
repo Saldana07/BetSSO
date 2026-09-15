@@ -1,4 +1,4 @@
-import type { ConfidenceLevel, DailyCandidate, PickOfTheDay } from './types'
+import type { ConfidenceLevel, DailyCandidate, Performance, PickOfTheDay } from './types'
 
 class ApiError extends Error {
   constructor(
@@ -30,4 +30,8 @@ export function getTopPicks(minConfidence?: ConfidenceLevel): Promise<PickOfTheD
 
 export function getDailyCandidates(minConfidence?: ConfidenceLevel): Promise<DailyCandidate[]> {
   return getJson<DailyCandidate[]>(withConfidenceParam('/api/predictions/daily-candidates', minConfidence))
+}
+
+export function getPerformance(): Promise<Performance> {
+  return getJson<Performance>('/api/predictions/performance')
 }

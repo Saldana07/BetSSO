@@ -8,6 +8,7 @@ export interface PickOfTheDay {
   kickoff_utc: string
   market: string
   selection: string
+  bookmaker: string | null
   bookmaker_odds: number
   model_probability: number
   implied_probability: number
@@ -20,6 +21,19 @@ export interface PickOfTheDay {
 export interface DailyCandidate extends PickOfTheDay {
   is_pick_of_day: boolean
 }
+
+export interface Performance {
+  settled_picks: number
+  wins: number
+  losses: number
+  hit_rate: number | null
+  profit_loss_units: number
+  yield_pct: number | null
+  pending_picks: number
+}
+
+/** Por debajo de esto, los porcentajes son ruido estadístico, no evidencia. */
+export const MIN_PICKS_FOR_SIGNIFICANCE = 30
 
 export const MARKET_LABELS: Record<string, string> = {
   '1X2': 'Ganador del partido',

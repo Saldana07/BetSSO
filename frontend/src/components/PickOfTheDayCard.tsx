@@ -40,6 +40,9 @@ export function PickOfTheDayCard({ pick, rank }: { pick: PickOfTheDay; rank?: nu
           <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             {pick.bookmaker_odds.toFixed(2)}
           </p>
+          {pick.bookmaker && (
+            <p className="text-xs text-slate-400 dark:text-slate-500">en {pick.bookmaker}</p>
+          )}
         </div>
 
         <div>

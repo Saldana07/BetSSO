@@ -13,6 +13,7 @@ class PickOfTheDayResponse(BaseModel):
     kickoff_utc: datetime
     market: str
     selection: str
+    bookmaker: str | None
     bookmaker_odds: float
     model_probability: float
     implied_probability: float
@@ -24,3 +25,15 @@ class PickOfTheDayResponse(BaseModel):
 
 class DailyCandidateResponse(PickOfTheDayResponse):
     is_pick_of_day: bool
+
+
+class PerformanceResponse(BaseModel):
+    """Desempeño REAL de los picks ya liquidados (no el backtest simulado)."""
+
+    settled_picks: int
+    wins: int
+    losses: int
+    hit_rate: float | None
+    profit_loss_units: float
+    yield_pct: float | None
+    pending_picks: int

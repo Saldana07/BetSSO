@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { ApiError, getDailyCandidates, getTopPicks } from './api'
+import { ApiError, getDailyCandidates, getPerformance, getTopPicks } from './api'
 import { CandidateRow } from './components/CandidateRow'
 import { ConfidenceFilter } from './components/ConfidenceFilter'
+import { PerformanceBar } from './components/PerformanceBar'
 import { PickOfTheDayCard } from './components/PickOfTheDayCard'
-import type { ConfidenceLevel, DailyCandidate, PickOfTheDay } from './types'
+import type { ConfidenceLevel, DailyCandidate, Performance, PickOfTheDay } from './types'
 
 type PicksState =
   | { status: 'loading' }
@@ -15,6 +16,7 @@ function App() {
   const [minConfidence, setMinConfidence] = useState<ConfidenceLevel | null>(null)
   const [picksState, setPicksState] = useState<PicksState>({ status: 'loading' })
   const [candidates, setCandidates] = useState<DailyCandidate[]>([])
+  const [performance, setPerformance] = useState<Performance | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
@@ -33,6 +35,10 @@ function App() {
     getDailyCandidates(minConfidence ?? undefined)
       .then(setCandidates)
       .catch(() => setCandidates([]))
+
+    getPerformance()
+      .then(setPerformance)
+      .catch(() => setPerformance(null))
   }, [refreshKey, minConfidence])
 
   const topPickKeys = new Set(
@@ -60,6 +66,12 @@ function App() {
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-8">
+        {performance && (
+          <div className="mb-6">
+            <PerformanceBar performance={performance} />
+          </div>
+        )}
+
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
             Picks del día

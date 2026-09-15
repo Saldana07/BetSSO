@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Un EV real en un mercado eficiente vive entre +2% y +8%. Un EV enorme
     # casi siempre significa que el modelo está mal, no que el mercado lo está.
     max_plausible_ev: float = 0.20
+    # Las cuotas son perecederas: calcular EV sobre un precio de hace horas
+    # produce una ventaja que ya no se puede tomar.
+    max_odds_age_hours: float = 6.0
 
 
 @lru_cache

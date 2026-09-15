@@ -112,6 +112,7 @@ CREATE TABLE predictions (
     market              VARCHAR(30) NOT NULL,
     selection           VARCHAR(20) NOT NULL,
     model_probability   NUMERIC(6,4) NOT NULL CHECK (model_probability BETWEEN 0 AND 1),
+    bookmaker           VARCHAR(60),                -- casa que ofrecía esta cuota (sin esto el pick es inaccionable)
     bookmaker_odds      NUMERIC(6,3) NOT NULL,
     implied_probability NUMERIC(6,4) NOT NULL,
     expected_value      NUMERIC(6,4) NOT NULL,      -- (model_prob * odds) - 1
@@ -119,6 +120,12 @@ CREATE TABLE predictions (
     historical_accuracy NUMERIC(5,4),                -- accuracy del backtest para este mercado/modelo
     is_pick_of_day      BOOLEAN NOT NULL DEFAULT false,
     generated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Liquidación real del pick (la llena jobs/settle_predictions.py al terminar
+    -- el partido). Es lo que permite medir si el sistema gana dinero de verdad,
+    -- a diferencia del backtest que solo simula el pasado.
+    settled_at          TIMESTAMPTZ,
+    is_win              BOOLEAN,
+    profit_loss         NUMERIC(8,3),               -- a stake plano de 1 unidad
     UNIQUE (match_id, model_version, market, selection)
 );
 CREATE INDEX idx_predictions_pick_of_day ON predictions (is_pick_of_day, generated_at);
