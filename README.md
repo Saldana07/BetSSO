@@ -1,0 +1,365 @@
+# Football Value Betting — Motor de "Apuesta Segura" Diaria
+
+## Estructura del proyecto
+
+```
+backend/
+  app/            FastAPI: main.py, models.py (SQLAlchemy = esquema DB), schemas.py, api/
+  ml/
+    features/     elo.py, poisson_xg.py, form.py
+    training/     train_classifier.py (XGBoost 1X2), train_goals_regressor.py (LightGBM goles)
+    value_betting/ ev_kelly.py (EV + Kelly fraccional)
+    backtesting/   backtest.py (gate obligatorio de producción)
+    ingestion/     (pendiente: conectores API-Football / football-data.co.uk)
+  jobs/           generate_daily_pick.py (job diario)
+  sql/schema.sql  DDL puro (referencia / init de docker-compose)
+docker-compose.yml
+```
+
+## Levantar el entorno
+
+```bash
+docker compose up -d db
+cp backend/.env.example backend/.env
+pip install -r backend/requirements.txt
+uvicorn app.main:app --reload --app-dir backend
+```
+
+La API queda en `http://localhost:8000`, con `/api/predictions/daily-pick` y `/api/predictions/daily-candidates`.
+
+## Estrategia contra el overfitting
+
+El riesgo de overfitting es el problema #1 en modelos deportivos: es muy fácil
+lograr 65% de "accuracy" en backtest por fuga de datos o suerte estadística, y
+perder dinero real en producción. Se aplican estas capas de defensa:
+
+1. **Validación temporal (walk-forward), nunca k-fold aleatorio.**
+   `TimeSeriesSplit` en [train_classifier.py](backend/ml/training/train_classifier.py)
+   asegura que el modelo nunca se entrena con partidos "futuros" respecto a los
+   de validación. Un k-fold aleatorio filtraría información de la temporada
+   completa (incluyendo forma post-partido) hacia el pasado.
+
+2. **Prevención estricta de fuga de datos (leakage).**
+   - Solo se usan cuotas **de apertura** para features de entrenamiento;
+     las cuotas de **cierre** (`snapshot_type='CLOSING'`) se usan únicamente
+     para evaluar el backtest, nunca como input del modelo, porque ya
+     incorporan información que el mercado descubrió después.
+   - Estadísticas post-partido (posesión final, xG final) nunca se usan como
+     feature para predecir ese mismo partido — solo alimentan el promedio
+     histórico/rodante hacia partidos futuros.
+
+3. **Holdout final fuera de la validación cruzada.**
+   El último 15% cronológico del dataset (`train_classifier.py`) se reserva
+   para calibración isotónica y queda completamente fuera del entrenamiento
+   y de los folds de CV.
+
+4. **Regularización explícita y modelos poco profundos.**
+   `max_depth=4` en XGBoost, `num_leaves=16` en LightGBM, más `reg_alpha`/
+   `reg_lambda` (L1/L2) y `subsample`/`colsample_bytree` < 1.0. Datasets de
+   fútbol son ruidosos (goles son eventos de baja frecuencia) — modelos muy
+   profundos memorizan ruido, no señal.
+
+5. **Early stopping** sobre el fold de validación de cada partición temporal,
+   evitando que el modelo siga ajustando tras el punto óptimo.
+
+6. **Calibración de probabilidades (isotónica).**
+   Un modelo con buen `accuracy`/`log_loss` puede tener probabilidades mal
+   calibradas (ej. dice 70% pero acierta 55% de las veces). Como el cálculo
+   de EV y Kelly (`ev_kelly.py`) depende directamente de la probabilidad, una
+   probabilidad no calibrada invalida toda la lógica de value betting aunque
+   el modelo "clasifique bien".
+
+7. **Backtest con gate de producción obligatorio.**
+   `backtest.py::passes_production_gate` exige:
+   - **Volumen mínimo** (`min_bets_for_significance=100`): pocas apuestas dan
+     yields engañosos por varianza.
+   - **Yield positivo** sobre datos 100% fuera de muestra.
+   - **Drawdown máximo acotado** (<30%): un modelo puede tener yield positivo
+     pero con rachas de pérdida inaceptables.
+   Ningún modelo se marca `model_version` activo en `Prediction` sin pasar
+   este gate.
+
+8. **Ensembling implícito Poisson + ML.**
+   `poisson_xg.py` dota de un prior basado en teoría estadística (no solo
+   ML puro). Mezclar un modelo paramétrico (Poisson/Dixon-Coles) con modelos
+   de árboles (XGBoost/LightGBM) reduce la varianza de un único enfoque y
+   actúa como regularizador natural.
+
+9. **Monitoreo de drift post-despliegue.**
+   `backtest_results` se recalcula periódicamente con datos nuevos; una caída
+   sostenida de `accuracy`/`yield_pct` respecto al backtest original es la
+   señal para reentrenar (los patrones tácticos del fútbol cambian por
+   temporada — fichajes, cambios de entrenador, reglas).
+
+## Filtro de "apuesta segura" (resumen de la lógica de negocio)
+
+`jobs/generate_daily_pick.py` evalúa **todos** los mercados
+(`1X2`, `DOUBLE_CHANCE`, `OU_1.5`, `OU_2.5`, `BTTS`) de los partidos del día,
+calcula EV y Kelly fraccional por selección, descarta cuotas fuera de
+`[1.50, 2.00]` o con `historical_accuracy` por debajo del umbral, y marca
+como `is_pick_of_day=True` el candidato de **mayor EV** que sobrevive el
+filtro. El endpoint `/api/predictions/daily-pick` solo lee ese resultado
+precomputado — no recalcula el modelo en cada request.
+
+## Ingesta de datos (API-Football)
+
+`ml/ingestion/` implementa el conector real contra API-Football (acceso directo,
+no vía RapidAPI — header `x-apisports-key`). Validado end-to-end contra la API
+real:
+
+```bash
+python -m ml.ingestion.sync_fixtures --date 2026-09-14                    # todas las ligas del día
+python -m ml.ingestion.sync_odds --date 2026-09-14 --snapshot-type LIVE
+python -m ml.ingestion.sync_injuries --league 39 --season 2024            # ver limitación abajo
+```
+
+**Limitaciones confirmadas del plan Free (100 req/día, 10 req/min):**
+- `/fixtures?date=X` **sin** filtro de liga funciona con datos reales de HOY
+  (todas las ligas disponibles). En cambio, `/fixtures?date=X&league=Y&season=Z`
+  (consulta acotada a una liga) está bloqueado para la temporada en curso —
+  solo permite temporadas 2022-2024. Por eso `sync_fixtures.py` se usa sin
+  `--league` en el plan Free.
+- `/odds` funciona igual para la temporada/fecha actual, tanto por fecha como
+  por `fixture_id` — confirmado con datos reales (William Hill, Bet365,
+  Pinnacle, etc.)
+- `/injuries` con filtro de liga+temporada está bloqueado en Free para la
+  temporada actual (mismo patrón que fixtures por liga) — el pipeline de
+  lesiones (`sync_injuries.py`, columnas `injuries_count`/`key_players_out`)
+  queda implementado pero sin datos reales hasta subir de plan.
+
+Un bug real se encontró y corrigió durante las pruebas: en
+[mappers.py](backend/ml/ingestion/mappers.py), la variable `market` se
+reasignaba dentro del loop de valores de un mismo mercado Over/Under,
+causando que solo la primera línea (`Over 1.5`) se guardara y el resto
+(`Under 1.5`, `Over/Under 2.5`) se descartara silenciosamente. Confirmado
+con un partido real (Deportivo Riestra vs. Lanús, Liga Profesional
+Argentina): pasó de 73 a 95 filas de cuotas tras el fix, cubriendo los 12
+mercados/selecciones esperados.
+
+## Entrenamiento completo con datos reales (primera corrida end-to-end)
+
+Fuente: histórico de FiveThirtyEight SPI (espejo CC0 en Kaggle — ver sección
+anterior), 61,464 partidos reales, 2016-2023, 40 ligas.
+
+```bash
+python -m ml.training.build_dataset --output data/processed/training_features.parquet
+python -m ml.training.train_classifier --features data/processed/training_features.parquet
+python -m ml.training.train_goals_regressor --features data/processed/training_features.parquet
+python -m ml.backtesting.run_historical_backtest --features data/processed/training_features.parquet
+```
+
+**Resultados reales (no simulados/inventados):**
+- Clasificador 1X2: accuracy ~48-50% en validación temporal (vs. 44% de la
+  línea base "siempre predecir victoria local"), log loss ~1.02.
+- Regresor de goles (LightGBM Poisson): deviance ~1.12-1.17 por fold.
+- Backtest (ver advertencia metodológica abajo): 495 apuestas evaluadas,
+  accuracy 59.8%, yield +3.86%, drawdown máximo 11.01% → **pasa el gate de
+  producción**.
+
+**Advertencia metodológica sobre el backtest:** este dataset no trae cuotas
+reales de casas de apuestas, así que `run_historical_backtest.py` simula una
+"cuota de mercado" invirtiendo las probabilidades del propio modelo de 538
+(`ext_prob_home/draw/away`, guardadas en `matches` durante la importación)
+con un margen del 6%, y mide si NUESTRO modelo le gana a esa referencia. El
+resultado debe leerse como *"nuestro modelo bate al modelo de 538 antes de
+comisión"*, no como ROI esperado contra un mercado real. El backtest contra
+cuotas reales de casas de apuestas queda pendiente hasta acumular histórico
+vía `ml/ingestion/sync_odds.py`.
+
+**Bugs reales encontrados y corregidos durante esta corrida** (todos por
+probar contra datos/librerías reales en vez de asumir que el código
+funcionaba):
+1. `mappers.py` (turno anterior): variable `market` se reasignaba dentro del
+   loop de Over/Under, perdiendo silenciosamente todas las líneas menos la
+   primera.
+2. `build_dataset.py`: una liga cuyo primer partido procesado terminaba 0-0
+   dejaba el promedio de goles de esa liga en exactamente 0.0, y la
+   siguiente división por ese promedio (en `team_strengths`) explotaba.
+   Corregido con un prior bayesiano simple sobre el promedio de la liga.
+3. `train_classifier.py`: `CalibratedClassifierCV(cv="prefit")` fue removido
+   en scikit-learn reciente; reemplazado por `FrozenEstimator` (el patrón
+   oficial desde sklearn 1.6).
+4. `backtest.py`: el bankroll inicial (1.0) era igual al stake por apuesta
+   (1.0) — apostando el 100% del capital en cada apuesta, lo que podía volver
+   el equity negativo y producía drawdowns sin sentido (>100%, se observó
+   302% antes del fix). Corregido separando `starting_bankroll` (100) de
+   `stake_unit` (1, es decir 1% del bankroll por apuesta).
+
+## Job diario conectado a los modelos entrenados (primera predicción real)
+
+`ml/serving/predict.py` calcula features "en vivo" (Elo/forma/Poisson
+reconstruidos desde el histórico real en DB hasta hoy, con la misma lógica
+que `build_dataset.py`) y las combina con los modelos ya entrenados para
+producir probabilidades por mercado. `jobs/generate_daily_pick.py` ahora usa
+esto en producción (`python -m jobs.generate_daily_pick`).
+
+**Primera corrida real, verificada a través del endpoint HTTP real:**
+```
+GET /api/predictions/daily-pick
+{"match_id":153,"home_team":"Deportivo Riestra","away_team":"Lanus",
+ "league":"Liga Profesional Argentina","market":"OU_1.5","selection":"OVER",
+ "bookmaker_odds":1.76,"model_probability":0.7489,"expected_value":0.3181,
+ "confidence_label":"BAJA"}
+```
+
+**Dos bugs más encontrados y corregidos** en esta integración:
+1. `BacktestResult` tenía `created_at` en `schema.sql` pero nunca se mapeó en
+   `models.py` — el job crasheaba al ordenar por esa columna. Agregado el
+   mapeo faltante.
+2. Varias casas de apuestas ofrecen la misma selección de un mercado con
+   cuotas distintas, pero `predictions` es única por
+   `(match, modelo, mercado, selección)` — el job intentaba insertar una fila
+   por bookmaker y violaba la restricción única. Corregido para quedarse con
+   la **mejor cuota disponible** por selección antes de evaluar EV/Kelly.
+
+**Por qué `confidence_label` da "BAJA" a pesar de EV +31.8%:** el backtest
+que persistimos en `backtest_results` solo cubre el mercado `1X2`; `OU_1.5`
+todavía no tiene una `historical_accuracy` validada, así que el sistema
+correctamente se abstiene de etiquetar esta selección como alta confianza.
+Más importante aún: Deportivo Riestra y Lanús son equipos sincronizados hoy
+por primera vez desde API-Football, sin historial propio en nuestra base
+(Elo arranca en el valor por defecto, `home_elo_diff≈0`) — la predicción es
+mecánicamente correcta pero con señal casi nula todavía. Esto es exactamente
+la limitación de "cold start" documentada en `ml/serving/predict.py`: hace
+falta (a) acumular partidos reales de estos equipos vía `sync_fixtures.py`
+día a día, o (b) reconciliar nombres de equipos entre API-Football y el
+histórico de FiveThirtyEight para heredar su Elo/forma ya calculados.
+
+## Frontend (React + Vite + Tailwind)
+
+`frontend/` — interfaz real para ver el Pick del Día sin tocar JSON crudo.
+Vite hace proxy de `/api` hacia `http://127.0.0.1:8000` (`vite.config.ts`),
+así que no hace falta configurar CORS ni URLs hardcodeadas.
+
+```bash
+cd frontend
+npm install   # solo la primera vez
+npm run dev
+```
+
+Abre `http://localhost:5173`. Muestra la tarjeta del pick del día (equipos,
+mercado, cuota, EV, sugerencia de Kelly, badge de confianza) y una tabla con
+el resto de candidatos evaluados ese día. Maneja los tres estados reales:
+cargando, sin pick disponible (404 del backend) y error de conexión.
+Probado en desktop y mobile (375px).
+
+## Top N picks + filtro de confianza
+
+El sistema pasó de mostrar un único "pick del día" a un **top 5** (uno por
+partido, ordenados por EV), con un filtro por nivel de confianza
+(`GET /api/predictions/top-picks?min_confidence=ALTA|MEDIA|BAJA`). El job
+diario ahora también es **idempotente** (borra las predicciones previas del
+día antes de recalcular, así se puede re-correr sin violar la restricción
+única cuando las cuotas se mueven).
+
+Se sincronizaron cuotas reales de los 17 partidos SCHEDULED de hoy (no solo
+uno), y se extendió `run_historical_backtest.py` para validar también el
+mercado `DOUBLE_CHANCE` (derivable de las probabilidades 1X2 de 538) además
+de `1X2`.
+
+**Resultado real, honesto:** con las dos accuracies validadas hasta ahora
+(1X2: 59.8%, Doble Oportunidad: 59.9%), **ningún mercado llega al 60%
+necesario para "ALTA"** — el filtro `ALTA` devuelve correctamente un 404
+("no hay picks con esa confianza hoy") en vez de forzar un resultado. Los
+mercados `OU_1.5`/`OU_2.5`/`BTTS` ni siquiera tienen accuracy todavía: 538
+no provee probabilidades de líneas de gol, así que esos mercados solo se
+podrán validar cuando se acumule histórico real de cuotas vía
+`sync_odds.py`. Esto es una limitación real de los datos, no un bug.
+
+**Dos bugs más corregidos** en este cambio:
+- `sync_odds.py` pedía cuotas de los 163 partidos del día (incluyendo 130 ya
+  terminados), desperdiciando cuota diaria de API-Football sin necesidad —
+  corregido para filtrar solo partidos `SCHEDULED`.
+- Al mapear `BacktestResult.created_at` en el turno anterior, SQLAlchemy
+  empezó a enviar `NULL` explícito en el INSERT en vez de dejar que la BD
+  aplicara su default — violaba el `NOT NULL`. Corregido con
+  `server_default=func.now()`.
+
+## Intento de mejorar la accuracy (resultado honesto: sin mejora significativa)
+
+Se probaron dos mejoras legítimas para intentar que algún mercado supere el
+60% de accuracy necesario para "ALTA":
+
+1. **Feature de días de descanso** (`home_rest_days`, `away_rest_days`,
+   `rest_days_diff` en [build_dataset.py](backend/ml/training/build_dataset.py)
+   y [predict.py](backend/ml/serving/predict.py), calculado igual en
+   entrenamiento y en producción). Resultado: accuracy 48.9% vs. 48.8%
+   anterior — dentro del ruido, sin mejora real.
+2. **Ensamble XGBoost + LightGBM** (promedio de probabilidades). Resultado:
+   48.92% vs. 48.88% de XGBoost solo — tampoco mejora real. Se descartó el
+   ensamble (no se justifica la complejidad/costo de inferencia extra para
+   una diferencia dentro del ruido); se conserva el feature de descanso por
+   ser teóricamente sólido y no tener costo, aunque no se pueda medir su
+   aporte con este dataset.
+
+**Conclusión honesta:** el techo actual (~48-50% de accuracy en 1X2) es un
+problema de **features, no de algoritmo** — ni afinar hiperparámetros ni
+combinar modelos lo va a mover mientras la señal de entrada sea la misma
+(Elo, Poisson, forma, descanso). Para subir de verdad hace falta información
+que hoy no tenemos: alineaciones/lesiones reales (bloqueado en el plan Free
+de API-Football), estadísticas de partido (tiros, posesión — no vienen en
+el histórico de FiveThirtyEight), o historial cabeza a cabeza específico
+entre cada par de equipos. Mover el umbral de "ALTA" artificialmente para
+que salga algo sería falsear la etiqueta, así que se mantiene en 60%.
+
+## El bug más grave del proyecto: apostar a ciegas (corregido)
+
+Los picks generados mostraban EV de **+12% a +31.8%**. En un mercado líquido
+una ventaja real vive entre +2% y +8%, así que esos números no eran una
+señal buena: eran una alarma.
+
+**Diagnóstico con datos duros:**
+- El modelo predijo `P(Over 1.5) = 0.749` para Riestra vs Lanús.
+- La tasa base global de Over 1.5 en nuestros 61,431 partidos históricos es
+  `0.7463`.
+- Es decir: **el modelo estaba devolviendo literalmente el promedio de la
+  población**, no una estimación de ese partido.
+- Confirmado en los 5 picks: todos tenían **0-1 partidos de historial y
+  `elo_diff` exactamente 0.0**. El modelo no sabía absolutamente nada de
+  esos equipos.
+
+**Por qué era peor que inútil:** al ordenar los picks por EV descendente, el
+sistema seleccionaba los partidos donde el mercado MÁS discrepaba de nuestra
+ignorancia — es decir, **rankeaba por "dónde es más probable que estemos
+equivocados"**. Una anti-ventaja: peor que apostar al azar.
+
+**Tres correcciones:**
+1. **Guarda de historial** (`min_team_history_matches=10`): ningún pick sale
+   si ambos equipos no tienen historial real suficiente.
+2. **Techo de EV plausible** (`max_plausible_ev=0.20`): un EV enorme es casi
+   siempre un modelo mal calibrado, no una casa de apuestas equivocada.
+3. **Reconciliación de identidades**
+   ([reconcile_teams.py](backend/ml/ingestion/reconcile_teams.py)): los
+   equipos de API-Football se vinculan con sus equivalentes del histórico de
+   538 (normalizando acentos + un mapa de alias para "Inter"/"Internazionale",
+   "SC Braga"/"Braga", etc.), para que un partido de hoy herede años de Elo y
+   forma en vez de arrancar en 1500. 25 equipos reconciliados en 8 ligas.
+
+**Resultado medible:**
+
+| | Antes | Después |
+|---|---|---|
+| Picks emitidos | 5 | 1 |
+| Historial detrás del pick | 0-1 partidos | 127 y 27 partidos |
+| `elo_diff` | 0.0 (sin información) | -45.0 (señal real) |
+| EV del mismo partido | +23.6% (ficticio) | +9.4% (plausible) |
+| Stake Kelly sugerido | 10.5% del bankroll | 3.6% del bankroll |
+| Partidos descartados | 0 | 16 por datos insuficientes |
+
+Menos picks es aquí **más** efectivo: un sistema que se abstiene cuando no
+sabe nada es rentable; uno que apuesta sobre ruido y lo etiqueta como +EV
+pierde dinero con confianza.
+
+**Advertencia sobre la reconciliación:** el histórico de 538 termina en junio
+de 2023, así que el Elo heredado tiene ~3 años de antigüedad (plantillas,
+ascensos/descensos). Es mucho mejor que arrancar en 1500, pero no es un Elo
+al día; se irá actualizando solo a medida que `sync_fixtures.py` acumule
+resultados reales.
+
+## Pendiente (próximos pasos)
+
+- Conector football-data.co.uk como fuente complementaria/histórica (útil
+  para entrenar, dado que API-Football Free no da histórico de ligas top).
+- Migraciones Alembic (`alembic init`) generadas desde `app/models.py`.
+- Frontend React (Vite + Tailwind) consumiendo `/api/predictions/daily-pick`.
+- Scheduler del job diario (APScheduler o cron del sistema operativo).
