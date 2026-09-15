@@ -15,6 +15,9 @@ export interface PickOfTheDay {
   expected_value: number
   kelly_fraction: number | null
   historical_accuracy: number | null
+  /** accuracy − tasa base del backtest: habilidad real del modelo en este mercado. */
+  historical_skill: number | null
+  backtest_n_bets: number | null
   confidence_label: ConfidenceLevel
 }
 

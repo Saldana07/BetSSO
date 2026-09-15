@@ -143,6 +143,10 @@ class Prediction(Base):
     expected_value: Mapped[float] = mapped_column(Numeric(6, 4))
     kelly_fraction: Mapped[float | None] = mapped_column(Numeric(6, 4))
     historical_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 4))
+    # Foto de la evidencia de habilidad al emitir el pick. La etiqueta de
+    # confianza usa historical_skill (= accuracy - base), no accuracy cruda.
+    historical_skill: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    backtest_n_bets: Mapped[int | None]
     is_pick_of_day: Mapped[bool] = mapped_column(Boolean, default=False)
     generated_at: Mapped[datetime]
 
@@ -166,6 +170,7 @@ class BacktestResult(Base):
     season_end: Mapped[str] = mapped_column(String(9))
     n_bets: Mapped[int]
     accuracy: Mapped[float | None] = mapped_column(Numeric(5, 4))
+    base_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 4))
     log_loss: Mapped[float | None] = mapped_column(Numeric(8, 5))
     brier_score: Mapped[float | None] = mapped_column(Numeric(8, 5))
     yield_pct: Mapped[float | None] = mapped_column(Numeric(6, 3))

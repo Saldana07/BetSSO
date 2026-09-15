@@ -28,6 +28,11 @@ class BacktestConfig:
 class BacktestResult:
     n_bets: int
     accuracy: float
+    # Tasa de acierto que obtendría un apostador SIN habilidad tomando exactamente
+    # las mismas cuotas: el promedio de la probabilidad implícita de las apuestas
+    # colocadas. accuracy - base_accuracy = habilidad real, comparable entre
+    # mercados (ver ml/value_betting/confidence.py).
+    base_accuracy: float
     yield_pct: float
     roi_pct: float
     max_drawdown_pct: float
@@ -74,11 +79,11 @@ def run_backtest(
         max_drawdown = max(max_drawdown, drawdown)
 
         wins += int(won)
-        bets.append({"stake": stake, "pnl": pnl, "won": won})
+        bets.append({"stake": stake, "pnl": pnl, "won": won, "implied": bet.implied_probability})
 
     n_bets = len(bets)
     if n_bets == 0:
-        return BacktestResult(0, 0.0, 0.0, 0.0, 0.0, equity_curve)
+        return BacktestResult(0, 0.0, 0.0, 0.0, 0.0, 0.0, equity_curve)
 
     total_staked = sum(b["stake"] for b in bets)
     total_pnl = sum(b["pnl"] for b in bets)
@@ -86,6 +91,7 @@ def run_backtest(
     return BacktestResult(
         n_bets=n_bets,
         accuracy=wins / n_bets,
+        base_accuracy=sum(b["implied"] for b in bets) / n_bets,
         yield_pct=(total_pnl / total_staked) * 100 if total_staked else 0.0,
         roi_pct=(total_pnl / total_staked) * 100 if total_staked else 0.0,
         max_drawdown_pct=max_drawdown * 100,

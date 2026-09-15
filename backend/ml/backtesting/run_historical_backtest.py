@@ -110,6 +110,7 @@ def main():
     parser.add_argument("--model-dir", default="models")
     parser.add_argument("--model-version", default="v1")
     parser.add_argument("--market", default="1X2", choices=list(MARKET_SPECS.keys()))
+    parser.add_argument("--persist", action="store_true", help="Guarda el resultado en backtest_results")
     args = parser.parse_args()
 
     print("*** SIMULACIÓN: cuotas derivadas de prob. de 538 + margen sintético, NO cuotas reales de mercado ***")
@@ -119,12 +120,34 @@ def main():
     result = run_backtest(predictions_df, BacktestConfig())
 
     print(f"Apuestas evaluadas (dentro de cuota 1.50-2.00 y EV>0): {result.n_bets}")
-    print(f"Accuracy: {result.accuracy:.3f}")
+    print(f"Accuracy: {result.accuracy:.3f}   (base sin habilidad: {result.base_accuracy:.3f}   ->   habilidad: {result.accuracy - result.base_accuracy:+.3f})")
     print(f"Yield: {result.yield_pct:.2f}%")
     print(f"Drawdown máximo: {result.max_drawdown_pct:.2f}%")
 
     passed, reason = passes_production_gate(result)
     print(f"\nGate de producción: {'PASA' if passed else 'NO PASA'} — {reason}")
+
+    if args.persist:
+        from app.database import SessionLocal
+        from app.models import BacktestResult as BacktestRow
+
+        # El nombre del mercado en backtest_results es el que usa el job
+        # (generate_daily_pick.MARKETS), sin el sufijo de selección.
+        market_name = args.market.split("_")[0] + ("_CHANCE" if args.market.startswith("DOUBLE") else "")
+        db = SessionLocal()
+        try:
+            db.add(BacktestRow(
+                model_version=args.model_version, market=market_name,
+                season_start="2016", season_end="2023",
+                n_bets=result.n_bets,
+                accuracy=round(result.accuracy, 4), base_accuracy=round(result.base_accuracy, 4),
+                yield_pct=round(result.yield_pct, 3), roi_pct=round(result.roi_pct, 3),
+                max_drawdown_pct=round(result.max_drawdown_pct, 3),
+            ))
+            db.commit()
+            print(f"Persistido en backtest_results como market='{market_name}'.")
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":

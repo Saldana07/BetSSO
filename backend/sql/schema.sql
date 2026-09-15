@@ -120,6 +120,11 @@ CREATE TABLE predictions (
     expected_value      NUMERIC(6,4) NOT NULL,      -- (model_prob * odds) - 1
     kelly_fraction      NUMERIC(6,4),                -- Kelly fraccional sugerido (ej. 0.25x)
     historical_accuracy NUMERIC(5,4),                -- accuracy del backtest para este mercado/modelo
+    -- Foto de la evidencia de habilidad al emitir el pick (de backtest_results).
+    -- La etiqueta de confianza se basa en historical_skill = accuracy - base,
+    -- NO en accuracy cruda, que no es comparable entre mercados.
+    historical_skill    NUMERIC(6,4),
+    backtest_n_bets     INTEGER,
     is_pick_of_day      BOOLEAN NOT NULL DEFAULT false,
     generated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- Liquidación real del pick (la llena jobs/settle_predictions.py al terminar
@@ -141,6 +146,9 @@ CREATE TABLE backtest_results (
     season_end      VARCHAR(9) NOT NULL,
     n_bets          INTEGER NOT NULL,
     accuracy        NUMERIC(5,4),
+    -- Lo que acertaría alguien sin información (clase mayoritaria, o prob.
+    -- implícita media de las cuotas tomadas). accuracy - base_accuracy = habilidad.
+    base_accuracy   NUMERIC(5,4),
     log_loss        NUMERIC(8,5),
     brier_score     NUMERIC(8,5),
     yield_pct       NUMERIC(6,3),                   -- (profit / total_staked) * 100

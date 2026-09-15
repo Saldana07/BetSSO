@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.database import SessionLocal
 from app.models import BacktestResult, Match, Odds, Prediction
+from ml.value_betting.confidence import SkillEvidence
 from ml.value_betting.ev_kelly import evaluate_bet, is_safe_bet_candidate
 
 settings = get_settings()
@@ -29,17 +30,24 @@ settings = get_settings()
 MARKETS = ["1X2", "DOUBLE_CHANCE", "OU_1.5", "OU_2.5", "BTTS", "CORNERS_OU_8.5", "CORNERS_OU_9.5"]
 
 
-def _historical_accuracy(db: Session, market: str) -> float | None:
-    stmt = (
-        select(BacktestResult.accuracy)
+def _skill_evidence(db: Session, market: str) -> SkillEvidence:
+    """Evidencia de habilidad del modelo en este mercado, del backtest más reciente."""
+    row = db.execute(
+        select(BacktestResult)
         .where(
             BacktestResult.model_version == settings.model_version,
             BacktestResult.market == market,
         )
         .order_by(BacktestResult.created_at.desc())
         .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return SkillEvidence(None, None, None)
+    return SkillEvidence(
+        accuracy=float(row.accuracy) if row.accuracy is not None else None,
+        base_accuracy=float(row.base_accuracy) if row.base_accuracy is not None else None,
+        n_bets=row.n_bets,
     )
-    return db.execute(stmt).scalar_one_or_none()
 
 
 def _todays_matches(db: Session) -> list[Match]:
@@ -111,7 +119,7 @@ def run(model_probabilities_fn):
             )
 
         candidates: list[Prediction] = []
-        accuracy_cache: dict[str, float | None] = {}
+        evidence_cache: dict[str, SkillEvidence] = {}
 
         skipped_no_history = 0
 
@@ -129,9 +137,10 @@ def run(model_probabilities_fn):
                 continue
 
             for market in MARKETS:
-                if market not in accuracy_cache:
-                    accuracy_cache[market] = _historical_accuracy(db, market)
-                hist_accuracy = accuracy_cache[market]
+                if market not in evidence_cache:
+                    evidence_cache[market] = _skill_evidence(db, market)
+                evidence = evidence_cache[market]
+                hist_accuracy = evidence.accuracy
 
                 odds_rows = _latest_odds(db, match.id, market)
 
@@ -178,6 +187,8 @@ def run(model_probabilities_fn):
                         expected_value=bet.expected_value,
                         kelly_fraction=bet.kelly_fraction,
                         historical_accuracy=hist_accuracy,
+                        historical_skill=evidence.skill,
+                        backtest_n_bets=evidence.n_bets,
                         is_pick_of_day=False,
                         generated_at=datetime.now(timezone.utc),
                     )

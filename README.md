@@ -446,16 +446,49 @@ cerca de la tasa base salvo evidencia fuerte. Si produce +EV real contra las
 casas dependerá de que el mercado de córners sea menos eficiente que el de
 goles — plausible, pero solo lo dirá el seguimiento de resultados.
 
-### Hallazgo pendiente: la etiqueta de confianza no es comparable entre mercados
+## Etiqueta de confianza basada en habilidad real (rediseño)
 
-`_confidence_label` usa `historical_accuracy ≥ 0.60` para "ALTA", pero esa
-"accuracy" **no mide lo mismo en todos los mercados**: en 1X2/Doble
-Oportunidad es el % de apuestas *colocadas* que ganaron (backtest.py); en
-córners es accuracy de clasificación binaria (validate_corners.py). Y ninguna
-descuenta la tasa base: 60.4% en córners 8.5 es casi nada de habilidad
-(la base es 59.9%), pero 59.8% en 1X2 local sí lo es (base 44%). La etiqueta
-debería usar *mejora sobre la tasa base* (o Brier), no accuracy cruda. Es el
-siguiente cambio de diseño importante.
+La etiqueta anterior usaba `accuracy ≥ 0.60` para "ALTA", y eso era
+engañoso por dos razones que córners dejó en evidencia:
+
+1. **No descontaba la tasa base.** 60.4% en Over 8.5 córners es ~0
+   habilidad (casi siempre sale Over: base 59.9%); 60% en victoria local es
+   una ventaja enorme (base 44%). La accuracy cruda no los distingue.
+2. **Premiaba el EV alto**, cuando un EV grande es más a menudo un modelo mal
+   calibrado que una casa equivocada (la lección del "apostar a ciegas").
+
+Ahora ([confidence.py](backend/ml/value_betting/confidence.py), con tests):
+
+    habilidad = accuracy − base_accuracy
+
+donde `base_accuracy` es lo que acertaría alguien sin información: la clase
+mayoritaria en mercados validados por clasificación (córners), o la
+probabilidad implícita media de las cuotas tomadas en mercados validados por
+apuestas (1X2, doble oportunidad — superarla es literalmente ganarle al
+mercado). `backtest_results` guarda ambas; cada pick guarda una foto de la
+evidencia (`historical_skill`, `backtest_n_bets`) y la tarjeta la muestra.
+Umbrales: MEDIA ≥ +2 pts, ALTA ≥ +5 pts, siempre con ≥100 apuestas de
+backtest; el EV solo actúa como piso, nunca sube la etiqueta.
+
+**Lo que la tabla cuenta ahora, comparable entre mercados:**
+
+| Mercado | Accuracy | Base | Habilidad | n |
+|---|---|---|---|---|
+| 1X2 (local) | 0.591 | 0.573 | **+1.8 pts** | 489 |
+| Doble oportunidad | 0.602 | 0.592 | +1.0 | 990 |
+| Córners 9.5 | 0.533 | 0.523 | +1.0 | 3,927 |
+| Córners 8.5 | 0.604 | 0.599 | +0.6 | 3,927 |
+
+**Ningún mercado alcanza los +2 pts de "MEDIA"**, así que hoy todos los
+picks son BAJA. Es la verdad: con n≈500 el error estándar es ~2.2 pts, o sea
+que ni el +1.8 de 1X2 es distinguible de cero. La etiqueta vieja llamaba
+"MEDIA" al pick de córners de hoy; la nueva dice BAJA y muestra por qué
+("+0.6 pts sobre la tasa base"). Los umbrales se fijaron por principio (qué
+es una ventaja profesional: 2-5% de yield) y no se bajaron para que el
+modelo actual "aprobara" — eso sería el mismo engaño con otro número.
+
+Los backtests ahora se persisten con `--persist` (antes se insertaban a
+mano), así que la tabla es reproducible.
 
 ## Pendiente (próximos pasos)
 

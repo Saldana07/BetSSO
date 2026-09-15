@@ -9,20 +9,12 @@ from app.core.config import Settings, get_settings
 from app.database import get_db
 from app.models import Match, Prediction
 from app.schemas import DailyCandidateResponse, PerformanceResponse, PickOfTheDayResponse
+from ml.value_betting.confidence import SkillEvidence, confidence_label
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
 ConfidenceLevel = Literal["ALTA", "MEDIA", "BAJA"]
 _CONFIDENCE_RANK = {"BAJA": 0, "MEDIA": 1, "ALTA": 2}
-
-
-def _confidence_label(expected_value: float, historical_accuracy: float | None) -> str:
-    accuracy = historical_accuracy or 0.0
-    if expected_value >= 0.15 and accuracy >= 0.60:
-        return "ALTA"
-    if expected_value >= 0.05 and accuracy >= 0.55:
-        return "MEDIA"
-    return "BAJA"
 
 
 def _to_response(pred: Prediction, cls=PickOfTheDayResponse):
@@ -42,7 +34,22 @@ def _to_response(pred: Prediction, cls=PickOfTheDayResponse):
         expected_value=float(pred.expected_value),
         kelly_fraction=float(pred.kelly_fraction) if pred.kelly_fraction is not None else None,
         historical_accuracy=float(pred.historical_accuracy) if pred.historical_accuracy is not None else None,
-        confidence_label=_confidence_label(float(pred.expected_value), pred.historical_accuracy),
+        historical_skill=float(pred.historical_skill) if pred.historical_skill is not None else None,
+        backtest_n_bets=pred.backtest_n_bets,
+        confidence_label=confidence_label(
+            float(pred.expected_value),
+            # Se reconstruye la evidencia desde la foto guardada en el pick:
+            # skill = accuracy - base, así que base = accuracy - skill.
+            SkillEvidence(
+                accuracy=float(pred.historical_accuracy) if pred.historical_accuracy is not None else None,
+                base_accuracy=(
+                    float(pred.historical_accuracy) - float(pred.historical_skill)
+                    if pred.historical_accuracy is not None and pred.historical_skill is not None
+                    else None
+                ),
+                n_bets=pred.backtest_n_bets,
+            ),
+        ),
         is_pick_of_day=pred.is_pick_of_day,
     )
 

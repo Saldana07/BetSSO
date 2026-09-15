@@ -20,7 +20,12 @@ class PickOfTheDayResponse(BaseModel):
     expected_value: float
     kelly_fraction: float | None
     historical_accuracy: float | None
-    confidence_label: str  # 'ALTA' | 'MEDIA' | 'BAJA' derivado de EV + accuracy
+    # Habilidad demostrada del modelo en este mercado = accuracy - tasa base.
+    # Es lo que determina la confianza, porque es comparable entre mercados
+    # (una accuracy cruda no lo es). None si el mercado no tiene backtest.
+    historical_skill: float | None
+    backtest_n_bets: int | None
+    confidence_label: str  # 'ALTA' | 'MEDIA' | 'BAJA', ver ml/value_betting/confidence.py
 
 
 class DailyCandidateResponse(PickOfTheDayResponse):

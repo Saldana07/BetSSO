@@ -59,11 +59,16 @@ export function PickOfTheDayCard({ pick, rank }: { pick: PickOfTheDay; rank?: nu
         </div>
       </div>
 
-      {pick.kelly_fraction !== null && (
-        <p className="mt-4 text-xs text-slate-400 dark:text-slate-500">
-          Sugerencia de stake (Kelly fraccional 1/4): {(pick.kelly_fraction * 100).toFixed(1)}% del bankroll
+      <div className="mt-4 space-y-1 text-xs text-slate-400 dark:text-slate-500">
+        {pick.kelly_fraction !== null && (
+          <p>Sugerencia de stake (Kelly fraccional 1/4): {(pick.kelly_fraction * 100).toFixed(1)}% del bankroll</p>
+        )}
+        <p>
+          {pick.historical_skill === null
+            ? 'Mercado sin backtest: el modelo no tiene habilidad demostrada aquí.'
+            : `Habilidad del modelo en este mercado: ${pick.historical_skill >= 0 ? '+' : ''}${(pick.historical_skill * 100).toFixed(1)} pts sobre la tasa base (${pick.backtest_n_bets} apuestas de backtest)`}
         </p>
-      )}
+      </div>
     </div>
   )
 }

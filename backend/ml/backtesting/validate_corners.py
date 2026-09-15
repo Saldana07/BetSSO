@@ -87,6 +87,7 @@ def persist(summary: dict, since: str):
                 season_end=str(datetime.now(timezone.utc).year),
                 n_bets=s["n"],
                 accuracy=round(s["accuracy"], 4),
+                base_accuracy=round(s["base_accuracy"], 4),
                 brier_score=round(s["brier"], 5),
             ))
         db.commit()
