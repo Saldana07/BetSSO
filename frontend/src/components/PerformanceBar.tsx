@@ -1,7 +1,8 @@
 import { MIN_PICKS_FOR_SIGNIFICANCE, type Performance } from '../types'
 
 export function PerformanceBar({ performance }: { performance: Performance }) {
-  const { settled_picks, wins, losses, hit_rate, profit_loss_units, yield_pct, pending_picks } = performance
+  const { settled_picks, wins, losses, hit_rate, profit_loss_units, yield_pct, pending_picks, clv_picks, avg_clv_pct, positive_clv_rate } =
+    performance
 
   if (settled_picks === 0) {
     return (
@@ -35,6 +36,25 @@ export function PerformanceBar({ performance }: { performance: Performance }) {
           <span className="text-xs text-slate-400 dark:text-slate-500">{pending_picks} pendientes</span>
         )}
       </div>
+
+      {clv_picks > 0 && avg_clv_pct !== null && (
+        <div
+          className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1 border-t border-slate-100 pt-2 dark:border-slate-800"
+          title="Closing Line Value: cuánto mejor fue la cuota tomada que la de cierre en la misma casa. Positivo = el mercado se movió a nuestro favor tras apostar. Es la medida profesional de ventaja: converge mucho antes que acertar o fallar partidos."
+        >
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Línea de cierre
+          </span>
+          <span className={`text-sm font-semibold ${avg_clv_pct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+            CLV {avg_clv_pct >= 0 ? '+' : ''}
+            {avg_clv_pct.toFixed(1)}%
+          </span>
+          <span className="text-sm text-slate-700 dark:text-slate-300">
+            {((positive_clv_rate ?? 0) * 100).toFixed(0)}% de picks batieron el cierre · {clv_picks}{' '}
+            {clv_picks === 1 ? 'pick' : 'picks'}
+          </span>
+        </div>
+      )}
 
       {!isSignificant && (
         <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">

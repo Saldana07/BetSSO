@@ -156,6 +156,9 @@ class Prediction(Base):
     settled_at: Mapped[datetime | None]
     is_win: Mapped[bool | None]
     profit_loss: Mapped[float | None] = mapped_column(Numeric(8, 3))  # a stake plano de 1 unidad
+    # Mejor cuota de cierre para la misma selección. CLV = bookmaker_odds / closing_odds - 1.
+    closing_odds: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    closing_bookmaker: Mapped[str | None] = mapped_column(String(60))
 
     match: Mapped["Match"] = relationship(back_populates="predictions")
 

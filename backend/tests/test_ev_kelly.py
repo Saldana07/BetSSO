@@ -1,6 +1,13 @@
 import pytest
 
-from ml.value_betting.ev_kelly import expected_value, is_safe_bet_candidate, kelly_criterion
+from ml.value_betting.ev_kelly import closing_line_value, expected_value, is_safe_bet_candidate, kelly_criterion
+
+
+def test_closing_line_value():
+    assert closing_line_value(2.00, 1.85) == pytest.approx(0.081, abs=1e-3)   # el mercado nos dio la razón
+    assert closing_line_value(1.65, 1.58) == pytest.approx(0.044, abs=1e-3)   # el pick real de ayer
+    assert closing_line_value(1.80, 1.80) == 0.0                              # sin movimiento
+    assert closing_line_value(1.70, 1.90) < 0                                 # el mercado se movió en contra
 
 
 def test_expected_value():

@@ -613,6 +613,38 @@ casas ya tienen todo eso y más. Para tener ventaja real haría falta o
 información privilegiada (alineaciones antes de que se muevan las líneas,
 datos de tracking) o mercados menos eficientes que el 1X2 de ligas grandes.
 
+## Closing Line Value: la pregunta que queda
+
+El backtest real demostró que el modelo no supera la línea de **cierre**.
+Queda una pregunta distinta y más justa: ¿supera la línea del **momento en
+que apostamos**? Si las cuotas que tomamos por la mañana se mueven
+sistemáticamente a nuestro favor antes del partido, hay ventaja aunque el
+cierre nos gane — es lo que miden los apostadores profesionales (*Closing
+Line Value*), y converge mucho antes que el P&L porque no depende de acertar
+partidos, solo de tomar precios que el mercado luego confirma.
+
+**Cómo funciona.** API-Football conserva las cuotas pre-partido tras el
+final (su última actualización, ~2 h antes del inicio, es el cierre). Al
+liquidar, `settle_predictions.py` persiste ese snapshot como `CLOSING` en
+`odds` (el esquema lo contemplaba desde el diseño inicial) y guarda en el
+pick la cuota de cierre **de la misma casa** en la que se tomó el precio.
+`CLV = cuota tomada / cuota de cierre − 1`. `/performance` reporta CLV medio
+y % de picks que batieron el cierre; la barra de resultados lo muestra.
+
+**Por qué misma casa y no "mejor precio".** El pick de ayer se tomó a 1.65
+(mejor precio); al cierre Bet365 y Marathonbet bajaron a 1.57-1.58, pero
+Betano seguía en 1.65. Mejor-contra-mejor daría CLV 0% y ocultaría que el
+mercado sí se movió a favor. Una casa rezagada no debe enmascarar al
+consenso; la comparación limpia es "mi precio en X contra el cierre de X".
+(Ese pick, anterior a esta métrica, no tiene casa registrada y usa el
+respaldo mejor-contra-mejor: por eso muestra 0%.)
+
+**Qué esperar.** Nada concluyente antes de ~50-100 picks con cierre. Si el
+CLV medio se asienta en positivo, hay ventaja real que el cierre absorbe y
+conviene apostar más temprano; si es negativo o cero, el modelo no aporta
+nada sobre el mercado en ningún momento del día, y esa será la respuesta
+definitiva. `daily.bat` lo acumula solo.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

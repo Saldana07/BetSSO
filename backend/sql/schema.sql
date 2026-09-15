@@ -133,6 +133,11 @@ CREATE TABLE predictions (
     settled_at          TIMESTAMPTZ,
     is_win              BOOLEAN,
     profit_loss         NUMERIC(8,3),               -- a stake plano de 1 unidad
+    -- Mejor cuota de cierre para la misma selección (snapshot CLOSING capturado
+    -- al liquidar). CLV = bookmaker_odds / closing_odds - 1: la medida
+    -- profesional de ventaja, que converge mucho antes que el P&L.
+    closing_odds        NUMERIC(6,3),
+    closing_bookmaker   VARCHAR(60),
     UNIQUE (match_id, model_version, market, selection)
 );
 CREATE INDEX idx_predictions_pick_of_day ON predictions (is_pick_of_day, generated_at);

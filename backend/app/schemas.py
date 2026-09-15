@@ -85,3 +85,9 @@ class PerformanceResponse(BaseModel):
     profit_loss_units: float
     yield_pct: float | None
     pending_picks: int
+    # Closing Line Value: la medida profesional de ventaja. Converge mucho
+    # antes que el P&L porque no depende de acertar el partido, solo de haber
+    # tomado un precio mejor que el de cierre. Medido contra la misma casa.
+    clv_picks: int
+    avg_clv_pct: float | None
+    positive_clv_rate: float | None

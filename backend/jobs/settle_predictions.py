@@ -17,10 +17,64 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from app.database import SessionLocal
-from app.models import Match, Prediction
+from app.models import Match, Odds, Prediction
 from ml.ingestion.api_football_client import APIFootballClient, APIFootballError
+from ml.ingestion.mappers import upsert_odds_for_match
 from ml.value_betting.settlement import MissingStatsError, UnknownMarketError, bet_won, profit_loss
+
+
+def _capture_closing_odds(db: Session, pending: list[Prediction]) -> int:
+    """Guarda en cada pick pendiente la mejor cuota de CIERRE de su selección.
+
+    API-Football conserva las cuotas pre-partido tras el final (su última
+    actualización, ~2 h antes del inicio, es el cierre a efectos prácticos).
+    Se persiste el snapshot completo como `CLOSING` en `odds` — el esquema lo
+    contemplaba desde el principio — y de ahí se toma el mejor precio para el
+    mercado/selección del pick, igual que se tomó el mejor precio al apostar.
+    Cuesta 1 petición por partido apostado."""
+    matches = {p.match.id: p.match for p in pending if p.closing_odds is None and p.match.api_match_id}
+    if not matches:
+        return 0
+
+    recorded_at = datetime.now(timezone.utc)
+    with APIFootballClient() as client:
+        for match in matches.values():
+            already = db.execute(
+                select(func.count(Odds.id)).where(Odds.match_id == match.id, Odds.snapshot_type == "CLOSING")
+            ).scalar_one()
+            if already:
+                continue
+            try:
+                for payload in client.get_odds(fixture_id=match.api_match_id):
+                    upsert_odds_for_match(db, match.id, payload, "CLOSING", recorded_at)
+            except APIFootballError as exc:
+                print(f"  [!] Sin cuotas de cierre para el partido {match.id}: {exc}")
+    db.flush()
+
+    filled = 0
+    for p in pending:
+        if p.closing_odds is not None:
+            continue
+        base = select(Odds.odds_value, Odds.bookmaker).where(
+            Odds.match_id == p.match_id, Odds.snapshot_type == "CLOSING",
+            Odds.market == p.market, Odds.selection == p.selection,
+        )
+        # Misma casa primero: es la comparación limpia ("mi precio en Betano
+        # contra el cierre de Betano"). Mejor-contra-mejor como respaldo, pero
+        # es más ruidoso: una sola casa rezagada oculta el movimiento del
+        # mercado (ayer: Betano se quedó en 1.65 mientras Bet365 bajó a 1.57).
+        row = None
+        if p.bookmaker:
+            row = db.execute(base.where(Odds.bookmaker == p.bookmaker)).first()
+        if row is None:
+            row = db.execute(base.order_by(Odds.odds_value.desc()).limit(1)).first()
+        if row:
+            p.closing_odds, p.closing_bookmaker = float(row[0]), row[1]
+            filled += 1
+    return filled
 
 
 def _fill_missing_corners(db: Session, pending: list[Prediction]) -> int:
@@ -68,6 +122,15 @@ def settle(db: Session) -> dict:
     now = datetime.now(timezone.utc)
 
     stats["corners_fetched"] = _fill_missing_corners(db, pending)
+
+    # El cierre se captura para TODO pick de partido terminado que aún no lo
+    # tenga (también los ya liquidados antes de existir esta métrica).
+    needs_closing = db.execute(
+        select(Prediction)
+        .join(Match, Prediction.match_id == Match.id)
+        .where(Prediction.closing_odds.is_(None), Match.status == "FINISHED")
+    ).scalars().all()
+    stats["closing_captured"] = _capture_closing_odds(db, needs_closing)
 
     for prediction in pending:
         match = prediction.match
@@ -121,6 +184,8 @@ def main():
         print(f"{stats['errors']} picks no se pudieron liquidar (mercado desconocido) y siguen pendientes.")
     if stats["waiting_stats"]:
         print(f"{stats['waiting_stats']} picks de córners esperan a que la API publique las estadísticas del partido.")
+    if stats.get("closing_captured"):
+        print(f"Cuotas de cierre capturadas para {stats['closing_captured']} picks (Closing Line Value).")
 
 
 if __name__ == "__main__":

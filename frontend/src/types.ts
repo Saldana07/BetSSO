@@ -33,6 +33,10 @@ export interface Performance {
   profit_loss_units: number
   yield_pct: number | null
   pending_picks: number
+  /** Closing Line Value: picks con cuota de cierre, CLV medio (%) y % con CLV positivo. */
+  clv_picks: number
+  avg_clv_pct: number | null
+  positive_clv_rate: number | null
 }
 
 /** Por debajo de esto, los porcentajes son ruido estadístico, no evidencia. */

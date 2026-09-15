@@ -42,6 +42,20 @@ def kelly_criterion(model_probability: float, odds: float, fraction_cap: float =
     return min(full_kelly, 1.0) * fraction_cap
 
 
+def closing_line_value(taken_odds: float, closing_odds: float) -> float:
+    """Closing Line Value: cuánto mejor fue la cuota que tomamos respecto a la
+    de cierre. Positivo = el mercado se movió a nuestro favor tras apostar.
+
+    Es la medida profesional de ventaja porque converge mucho más rápido que
+    el P&L: acertar o fallar un partido es azar, pero tomar sistemáticamente
+    precios mejores que el cierre no lo es. Tomar 2.00 y que cierre en 1.85
+    da +8.1%: el mercado terminó dándonos la razón aunque el partido se
+    pierda. Si el CLV medio es negativo, no hay ventaja aunque se acierten
+    rachas.
+    """
+    return taken_odds / closing_odds - 1.0
+
+
 def evaluate_bet(model_probability: float, odds: float, fraction_cap: float = 0.25) -> ValueBet:
     return ValueBet(
         model_probability=model_probability,

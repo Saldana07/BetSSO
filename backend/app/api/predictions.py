@@ -20,6 +20,7 @@ from app.schemas import (
 from ml.serving.predict import get_models, match_context
 from ml.simulation.monte_carlo import compare_with, simulate_match
 from ml.value_betting.confidence import SkillEvidence, confidence_label
+from ml.value_betting.ev_kelly import closing_line_value
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
@@ -204,7 +205,17 @@ def get_performance(db: Session = Depends(get_db)):
         )
     ).scalar_one()
 
+    clv_rows = db.execute(
+        select(Prediction.bookmaker_odds, Prediction.closing_odds).where(
+            Prediction.is_pick_of_day.is_(True), Prediction.closing_odds.isnot(None)
+        )
+    ).all()
+    clvs = [closing_line_value(float(taken), float(closing)) for taken, closing in clv_rows]
+
     return PerformanceResponse(
+        clv_picks=len(clvs),
+        avg_clv_pct=(sum(clvs) / len(clvs) * 100) if clvs else None,
+        positive_clv_rate=(sum(c > 0 for c in clvs) / len(clvs)) if clvs else None,
         settled_picks=total,
         wins=wins,
         losses=total - wins,
