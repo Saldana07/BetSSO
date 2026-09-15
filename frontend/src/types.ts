@@ -41,6 +41,8 @@ export const MARKET_LABELS: Record<string, string> = {
   'OU_1.5': 'Más/menos de 1.5 goles',
   'OU_2.5': 'Más/menos de 2.5 goles',
   BTTS: 'Ambos marcan',
+  'CORNERS_OU_8.5': 'Más/menos de 8.5 córners',
+  'CORNERS_OU_9.5': 'Más/menos de 9.5 córners',
 }
 
 export const SELECTION_LABELS: Record<string, string> = {

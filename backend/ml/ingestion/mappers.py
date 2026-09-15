@@ -109,19 +109,31 @@ _SELECTION_MAP = {
 # como 'Goals Over/Under First Half' / '- Second Half' que deben excluirse explícitamente
 # (un simple "in" haría match con esas también y contaminaría las cuotas de partido completo).
 _FULL_MATCH_OU_BET_NAME = "Goals Over/Under"
+# Total de córners del partido completo. Excluye 'Home Corners Over/Under',
+# 'Total Corners (1st Half)', etc. Las líneas se limitan a las validadas en
+# ml/features/corners.py (LINES) y SOLO a .5: una línea entera ('Over 9')
+# puede empatar ("push") y settlement.py no contempla devoluciones.
+_CORNERS_OU_BET_NAME = "Corners Over Under"
+_CORNERS_LINES = ("8.5", "9.5")
 
 
 def _map_over_under(bet_name: str, value_label: str) -> tuple[str, str] | None:
-    """'Goals Over/Under' (partido completo) con value 'Over 2.5' -> market='OU_2.5', selection='OVER'."""
-    if bet_name != _FULL_MATCH_OU_BET_NAME:
+    """'Goals Over/Under' con 'Over 2.5' -> ('OU_2.5', 'OVER');
+    'Corners Over Under' con 'Under 9.5' -> ('CORNERS_OU_9.5', 'UNDER')."""
+    if bet_name == _FULL_MATCH_OU_BET_NAME:
+        prefix, allowed_lines = "OU_", ("1.5", "2.5")
+    elif bet_name == _CORNERS_OU_BET_NAME:
+        prefix, allowed_lines = "CORNERS_OU_", _CORNERS_LINES
+    else:
         return None
+
     parts = value_label.split()
     if len(parts) != 2:
         return None
     direction, line = parts
-    if direction not in ("Over", "Under") or line not in ("1.5", "2.5"):
+    if direction not in ("Over", "Under") or line not in allowed_lines:
         return None
-    return f"OU_{line}", direction.upper()
+    return f"{prefix}{line}", direction.upper()
 
 
 def upsert_odds_for_match(

@@ -59,6 +59,8 @@ class Match(Base):
     away_goals: Mapped[int | None] = mapped_column(SmallInteger)
     home_xg: Mapped[float | None] = mapped_column(Numeric(4, 2))
     away_xg: Mapped[float | None] = mapped_column(Numeric(4, 2))
+    home_corners: Mapped[int | None] = mapped_column(SmallInteger)
+    away_corners: Mapped[int | None] = mapped_column(SmallInteger)
     referee: Mapped[str | None] = mapped_column(String(120))
     venue: Mapped[str | None] = mapped_column(String(120))
     ext_prob_home: Mapped[float | None] = mapped_column(Numeric(6, 4))

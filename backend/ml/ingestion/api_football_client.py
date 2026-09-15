@@ -182,6 +182,20 @@ class APIFootballClient:
             params["search"] = search
         return self._get("/leagues", params)
 
+    def get_fixture_corners(self, fixture_id: int) -> tuple[int, int] | None:
+        """(córners local, córners visitante) de un partido terminado, o None si no hay datos."""
+        results = self._get("/fixtures/statistics", {"fixture": fixture_id})
+        if len(results) != 2:
+            return None
+        corners = []
+        for team in results:
+            value = next((s["value"] for s in team.get("statistics", []) if s.get("type") == "Corner Kicks"), None)
+            corners.append(int(value) if value is not None else None)
+        if None in corners:
+            return None
+        # La API lista primero al local y luego al visitante.
+        return corners[0], corners[1]
+
     def get_team_statistics(self, team: int, league: int, season: int) -> dict | None:
         results = self._get("/teams/statistics", {"team": team, "league": league, "season": season})
         return results if isinstance(results, dict) and results else None

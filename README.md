@@ -401,6 +401,62 @@ python -m ml.ingestion.sync_odds --date HOY --snapshot-type LIVE
 python -m jobs.generate_daily_pick
 ```
 
+## Mercado de córners
+
+**Datos.** FiveThirtyEight no trae córners, así que se incorporó un espejo en
+Kaggle de football-data.co.uk (`data/raw/club_football/Matches.csv`, licencia
+abierta, descargable sin login): **122,111 partidos con córners de 22 ligas
+europeas, desde 2000 hasta pocos días atrás** — datos actuales, no de 2023.
+Se usa directamente desde el CSV (tercer namespace de nombres, resuelto con
+normalización + alias en [corners.py](backend/ml/features/corners.py)).
+
+**Modelo.** Poisson multiplicativo sobre tasas rodantes de córners a favor /
+en contra por equipo (últimos 20 partidos), reutilizando la maquinaria de
+goles. Total ~ Poisson(λ_local + λ_visitante) → P(Over/Under línea).
+
+**Validación cronológica** ([validate_corners.py](backend/ml/backtesting/validate_corners.py),
+3,927 partidos de 2025-2026, sin fuga temporal):
+
+| Versión | Brier vs base | Calibración |
+|---|---|---|
+| Sin encogimiento | **peor** en las 4 líneas | sobreconfiado: 78% predicho → 67% real; 25% → 39% |
+| Con prior bayesiano (20 partidos) | **mejor** en las 4 líneas | 55.7% → 57.1%; 73.6% → 72.3% |
+
+La primera versión ordenaba bien pero escalaba mal: un promedio de 20
+partidos es ruidoso y sus extremos regresan a la media. El encogimiento
+hacia el promedio de liga lo corrigió — misma técnica que `LEAGUE_PRIOR_WEIGHT`
+en goles.
+
+**Solo se apuestan las líneas 8.5 y 9.5.** En 10.5 y 11.5 la accuracy alta
+(73%) es puro desbalance de clases (casi siempre sale Under); persistirla
+habría hecho que el sistema etiquetara esos picks como alta confianza por
+una ilusión estadística. Solo se conservan las líneas donde el modelo supera
+la tasa base en Brier *y* en accuracy.
+
+**Liquidación.** Los picks de córners necesitan los córners reales del
+partido: `settle_predictions.py` los trae de `/fixtures/statistics` (1
+petición por partido apostado, ~0-3/día) y deja pendiente lo que la API aún
+no publicó, en vez de inventar un resultado. Solo se ingieren líneas `.5`
+porque una línea entera puede empatar y la liquidación no contempla
+devoluciones.
+
+**Ventaja honesta:** pequeña. Brier 0.2392 vs 0.2403 (línea 8.5). Los córners
+son un mercado difícil y el modelo lo sabe: sus probabilidades se quedan
+cerca de la tasa base salvo evidencia fuerte. Si produce +EV real contra las
+casas dependerá de que el mercado de córners sea menos eficiente que el de
+goles — plausible, pero solo lo dirá el seguimiento de resultados.
+
+### Hallazgo pendiente: la etiqueta de confianza no es comparable entre mercados
+
+`_confidence_label` usa `historical_accuracy ≥ 0.60` para "ALTA", pero esa
+"accuracy" **no mide lo mismo en todos los mercados**: en 1X2/Doble
+Oportunidad es el % de apuestas *colocadas* que ganaron (backtest.py); en
+córners es accuracy de clasificación binaria (validate_corners.py). Y ninguna
+descuenta la tasa base: 60.4% en córners 8.5 es casi nada de habilidad
+(la base es 59.9%), pero 59.8% en 1X2 local sí lo es (base 44%). La etiqueta
+debería usar *mejora sobre la tasa base* (o Brier), no accuracy cruda. Es el
+siguiente cambio de diseño importante.
+
 ## Pendiente (próximos pasos)
 
 - Conector football-data.co.uk como fuente complementaria/histórica (útil

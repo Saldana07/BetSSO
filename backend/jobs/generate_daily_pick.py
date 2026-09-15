@@ -26,7 +26,7 @@ from ml.value_betting.ev_kelly import evaluate_bet, is_safe_bet_candidate
 
 settings = get_settings()
 
-MARKETS = ["1X2", "DOUBLE_CHANCE", "OU_1.5", "OU_2.5", "BTTS"]
+MARKETS = ["1X2", "DOUBLE_CHANCE", "OU_1.5", "OU_2.5", "BTTS", "CORNERS_OU_8.5", "CORNERS_OU_9.5"]
 
 
 def _historical_accuracy(db: Session, market: str) -> float | None:

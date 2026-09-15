@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Match
+from ml.features.corners import CornerModel, corner_market_probabilities
 from ml.features.elo import elo_win_draw_loss_probs, update_elo
 from ml.features.form import MatchResult, build_form_features
 from ml.features.poisson_xg import expected_goals, market_probabilities, team_strengths
@@ -44,6 +45,9 @@ class TrainedModels:
         self.encoder = joblib.load(f"{model_dir}/label_encoder_{model_version}.joblib")
         self.goals_home_model = joblib.load(f"{model_dir}/goals_home_{model_version}.joblib")
         self.goals_away_model = joblib.load(f"{model_dir}/goals_away_{model_version}.joblib")
+        # El modelo de córners no se entrena: son tasas rodantes + Poisson
+        # sobre el CSV de football-data.co.uk (ver ml/features/corners.py).
+        self.corners = CornerModel()
 
 
 def _replay_league_state(past_matches: list[Match]) -> dict:
@@ -205,7 +209,18 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
     goals_away_pred = max(float(models.goals_away_model.predict(X)[0]), 0.05)
     goals_market_probs = market_probabilities(goals_home_pred, goals_away_pred)
 
+    # Córners: solo si AMBOS equipos tienen historial suficiente en la fuente
+    # de córners. Si no, simplemente no hay claves CORNERS_* y el job no
+    # emite picks de córners para este partido (sin datos no se apuesta).
+    corner_probs: dict[str, float] = {}
+    expected_corners = models.corners.expected_corners(
+        match.home_team.name, match.away_team.name, match.kickoff_utc
+    )
+    if expected_corners is not None:
+        corner_probs = corner_market_probabilities(*expected_corners)
+
     return {
+        **corner_probs,
         "1X2_HOME": float(p_home),
         "1X2_DRAW": float(p_draw),
         "1X2_AWAY": float(p_away),
@@ -223,5 +238,6 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
             "home_history": features["_home_history"],
             "away_history": features["_away_history"],
             "home_elo_diff": features["elo_diff"],
+            "expected_corners": sum(expected_corners) if expected_corners else None,
         },
     }

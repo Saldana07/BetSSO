@@ -15,8 +15,30 @@ class UnknownMarketError(ValueError):
     pass
 
 
-def bet_won(market: str, selection: str, home_goals: int, away_goals: int) -> bool:
+class MissingStatsError(ValueError):
+    """El mercado necesita una estadística (ej. córners) que el partido aún no tiene."""
+
+
+def bet_won(
+    market: str,
+    selection: str,
+    home_goals: int,
+    away_goals: int,
+    home_corners: int | None = None,
+    away_corners: int | None = None,
+) -> bool:
     total_goals = home_goals + away_goals
+
+    if market.startswith("CORNERS_OU_"):
+        if home_corners is None or away_corners is None:
+            raise MissingStatsError(f"El mercado {market} necesita los córners del partido y aún no están")
+        line = float(market.removeprefix("CORNERS_OU_"))
+        total_corners = home_corners + away_corners
+        if selection == "OVER":
+            return total_corners > line
+        if selection == "UNDER":
+            return total_corners < line
+        raise UnknownMarketError(f"Selección desconocida '{selection}' para {market}")
 
     if market == "1X2":
         if selection == "HOME":

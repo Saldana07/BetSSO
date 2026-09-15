@@ -1,6 +1,30 @@
 import pytest
 
-from ml.value_betting.settlement import UnknownMarketError, bet_won, profit_loss
+from ml.value_betting.settlement import MissingStatsError, UnknownMarketError, bet_won, profit_loss
+
+
+@pytest.mark.parametrize(
+    "market,selection,hc,ac,expected",
+    [
+        ("CORNERS_OU_9.5", "OVER", 6, 4, True),    # 10 > 9.5
+        ("CORNERS_OU_9.5", "OVER", 5, 4, False),   # 9
+        ("CORNERS_OU_9.5", "UNDER", 5, 4, True),
+        ("CORNERS_OU_9.5", "UNDER", 6, 4, False),
+        ("CORNERS_OU_8.5", "OVER", 5, 4, True),    # 9 > 8.5
+        ("CORNERS_OU_8.5", "UNDER", 4, 4, True),   # 8
+    ],
+)
+def test_corners_over_under(market, selection, hc, ac, expected):
+    # Los goles no importan para este mercado; se pasan valores arbitrarios.
+    assert bet_won(market, selection, 1, 1, home_corners=hc, away_corners=ac) is expected
+
+
+def test_corners_sin_datos_no_se_liquida():
+    # Sin córners cargados, NO se debe inventar un resultado: se deja pendiente.
+    with pytest.raises(MissingStatsError):
+        bet_won("CORNERS_OU_9.5", "OVER", 1, 1)
+    with pytest.raises(MissingStatsError):
+        bet_won("CORNERS_OU_9.5", "OVER", 1, 1, home_corners=5, away_corners=None)
 
 
 @pytest.mark.parametrize(

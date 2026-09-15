@@ -39,6 +39,8 @@ CREATE TABLE matches (
     away_goals_ht   SMALLINT,
     home_xg         NUMERIC(4,2),                  -- xG post-partido (proveedor)
     away_xg         NUMERIC(4,2),
+    home_corners    SMALLINT,                      -- para liquidar mercados de córners
+    away_corners    SMALLINT,
     referee         VARCHAR(120),
     venue           VARCHAR(120),
     weather_temp_c  NUMERIC(4,1),

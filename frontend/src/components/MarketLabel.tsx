@@ -1,6 +1,10 @@
 import { MARKET_LABELS, SELECTION_LABELS } from '../types'
 
 function formatSelection(market: string, selection: string): string {
+  if (market.startsWith('CORNERS_OU_')) {
+    const line = market.replace('CORNERS_OU_', '')
+    return `${SELECTION_LABELS[selection] ?? selection} ${line} córners`
+  }
   if (market.startsWith('OU_')) {
     const line = market.replace('OU_', '')
     return `${SELECTION_LABELS[selection] ?? selection} ${line} goles`
