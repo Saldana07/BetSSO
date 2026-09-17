@@ -29,7 +29,7 @@ from app.models import Match
 from ml.features.corners import CornerModel, corner_market_probabilities
 from ml.features.elo import elo_win_draw_loss_probs, update_elo
 from ml.features.form import MatchResult, build_form_features
-from ml.features.poisson_xg import expected_goals, market_probabilities, team_strengths
+from ml.features.poisson_xg import expected_goals, extended_market_probabilities, market_probabilities, team_strengths
 from ml.training.build_dataset import (
     FALLBACK_LEAGUE_AVG_GOALS,
     LEAGUE_PRIOR_WEIGHT,
@@ -243,7 +243,9 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
 
     goals_home_pred = max(float(models.goals_home_model.predict(X)[0]), 0.05)
     goals_away_pred = max(float(models.goals_away_model.predict(X)[0]), 0.05)
-    goals_market_probs = market_probabilities(goals_home_pred, goals_away_pred)
+    # Todos los mercados de goles (líneas 0.5-4.5, totales por equipo, hándicap
+    # asiático, marcador exacto) salen de la misma matriz de marcadores.
+    goals_market_probs = extended_market_probabilities(goals_home_pred, goals_away_pred)
 
     # Córners: solo si AMBOS equipos tienen historial suficiente en la fuente
     # de córners. Si no, simplemente no hay claves CORNERS_* y el job no
@@ -256,19 +258,17 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
         corner_probs = corner_market_probabilities(*expected_corners)
 
     return {
+        **goals_market_probs,
         **corner_probs,
+        # El 1X2 y la doble oportunidad los da el clasificador calibrado, que
+        # es mejor que la Poisson pura para resultado (la Poisson es solo una
+        # de sus features); sobreescriben las claves derivadas de la matriz.
         "1X2_HOME": float(p_home),
         "1X2_DRAW": float(p_draw),
         "1X2_AWAY": float(p_away),
         "DOUBLE_CHANCE_1X": float(p_home + p_draw),
         "DOUBLE_CHANCE_X2": float(p_draw + p_away),
         "DOUBLE_CHANCE_12": float(p_home + p_away),
-        "OU_1.5_OVER": goals_market_probs["OU_1.5_OVER"],
-        "OU_1.5_UNDER": goals_market_probs["OU_1.5_UNDER"],
-        "OU_2.5_OVER": goals_market_probs["OU_2.5_OVER"],
-        "OU_2.5_UNDER": goals_market_probs["OU_2.5_UNDER"],
-        "BTTS_YES": goals_market_probs["BTTS_YES"],
-        "BTTS_NO": goals_market_probs["BTTS_NO"],
         "_diagnostics": {
             "n_historical_matches": features["_n_historical_matches"],
             "home_history": features["_home_history"],

@@ -95,6 +95,66 @@ def test_btts(selection, home, away, expected):
     assert bet_won("BTTS", selection, home, away) is expected
 
 
+@pytest.mark.parametrize(
+    "market,selection,home,away,expected",
+    [
+        ("OU_0.5", "OVER", 1, 0, True),
+        ("OU_0.5", "UNDER", 0, 0, True),
+        ("OU_3.5", "OVER", 2, 2, True),
+        ("OU_3.5", "UNDER", 2, 1, True),
+        ("OU_4.5", "OVER", 3, 2, True),
+        ("OU_4.5", "OVER", 2, 2, False),
+    ],
+)
+def test_over_under_todas_las_lineas(market, selection, home, away, expected):
+    assert bet_won(market, selection, home, away) is expected
+
+
+@pytest.mark.parametrize(
+    "market,selection,home,away,expected",
+    [
+        ("TEAM_OU_HOME_1.5", "OVER", 2, 0, True),
+        ("TEAM_OU_HOME_1.5", "OVER", 1, 3, False),   # el visitante no cuenta
+        ("TEAM_OU_HOME_1.5", "UNDER", 1, 3, True),
+        ("TEAM_OU_AWAY_0.5", "OVER", 0, 1, True),
+        ("TEAM_OU_AWAY_0.5", "UNDER", 3, 0, True),
+        ("TEAM_OU_AWAY_2.5", "OVER", 0, 2, False),
+    ],
+)
+def test_totales_por_equipo(market, selection, home, away, expected):
+    assert bet_won(market, selection, home, away) is expected
+
+
+@pytest.mark.parametrize(
+    "market,selection,home,away,expected",
+    [
+        ("AH_-1.5", "HOME", 3, 1, True),    # local gana por 2: cubre -1.5
+        ("AH_-1.5", "HOME", 2, 1, False),   # gana por 1: no cubre
+        ("AH_-1.5", "AWAY", 2, 1, True),    # visitante +1.5 cubre
+        ("AH_+0.5", "HOME", 1, 1, True),    # empate: local +0.5 cubre (= 1X)
+        ("AH_-0.5", "HOME", 1, 1, False),   # empate: local -0.5 no cubre (= 1X2 local)
+        ("AH_+1.5", "AWAY", 0, 3, True),    # visitante -1.5 cubre
+        ("AH_+2.5", "HOME", 0, 2, True),    # local +2.5 cubre perdiendo por 2
+    ],
+)
+def test_handicap_asiatico_lineas_medias(market, selection, home, away, expected):
+    assert bet_won(market, selection, home, away) is expected
+
+
+def test_handicap_entero_o_cuarto_no_se_liquida():
+    # Implican devolución total o parcial; mejor fallar que inventar.
+    with pytest.raises(UnknownMarketError):
+        bet_won("AH_-1.0", "HOME", 2, 1)
+    with pytest.raises(UnknownMarketError):
+        bet_won("AH_-0.75", "HOME", 2, 1)
+
+
+def test_marcador_exacto():
+    assert bet_won("EXACT_SCORE", "2-1", 2, 1) is True
+    assert bet_won("EXACT_SCORE", "2-1", 1, 2) is False
+    assert bet_won("EXACT_SCORE", "0-0", 0, 0) is True
+
+
 def test_mercado_desconocido_falla_ruidosamente():
     # Preferible a devolver False en silencio: un mercado mal resuelto
     # corrompe el historial de rentabilidad sin que nadie se entere.

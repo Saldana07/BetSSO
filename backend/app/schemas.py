@@ -75,6 +75,46 @@ class SimulationResponse(BaseModel):
     conclusion: str
 
 
+class MatchSummary(BaseModel):
+    match_id: int
+    home_team: str
+    away_team: str
+    league: str
+    kickoff_utc: datetime
+    n_markets: int          # mercados con cuota disponibles para analizar
+    has_pick: bool          # ¿alguno pasó el filtro estricto de picks del día?
+
+
+class MarketRow(BaseModel):
+    """Un mercado/selección de un partido con la cuota real y la evaluación del modelo."""
+
+    market: str
+    selection: str
+    bookmaker: str
+    odds: float
+    model_probability: float
+    implied_probability: float
+    expected_value: float
+    # Evidencia de habilidad del modelo en ese mercado (backtest real).
+    historical_skill: float | None
+    backtest_n_bets: int | None
+    validation: str        # 'VALIDADO' | 'SIN_VENTAJA' | 'SIN_VALIDAR'
+    in_odds_range: bool    # dentro de 1.50-2.00
+    ev_suspicious: bool    # EV por encima del techo plausible: casi siempre error del modelo
+    is_pick: bool          # pasó el filtro estricto de picks del día
+
+
+class MatchMarketsResponse(BaseModel):
+    match_id: int
+    home_team: str
+    away_team: str
+    league: str
+    kickoff_utc: datetime
+    home_history: int
+    away_history: int
+    rows: list[MarketRow]  # ordenados por EV descendente; el primero es "lo más favorable"
+
+
 class PerformanceResponse(BaseModel):
     """Desempeño REAL de los picks ya liquidados (no el backtest simulado)."""
 

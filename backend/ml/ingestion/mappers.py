@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Injury, League, Match, Odds, Team
+from ml.features.poisson_xg import ASIAN_HANDICAP_LINES, TEAM_TOTAL_LINES, TOTAL_LINES
 
 
 def upsert_league(db: Session, raw: dict) -> League:
@@ -117,16 +118,12 @@ _CORNERS_OU_BET_NAME = "Corners Over Under"
 _CORNERS_LINES = ("8.5", "9.5")
 
 
-def _map_over_under(bet_name: str, value_label: str) -> tuple[str, str] | None:
-    """'Goals Over/Under' con 'Over 2.5' -> ('OU_2.5', 'OVER');
-    'Corners Over Under' con 'Under 9.5' -> ('CORNERS_OU_9.5', 'UNDER')."""
-    if bet_name == _FULL_MATCH_OU_BET_NAME:
-        prefix, allowed_lines = "OU_", ("1.5", "2.5")
-    elif bet_name == _CORNERS_OU_BET_NAME:
-        prefix, allowed_lines = "CORNERS_OU_", _CORNERS_LINES
-    else:
-        return None
+_TOTAL_LINES = tuple(f"{l}" for l in TOTAL_LINES)              # "0.5".."4.5"
+_TEAM_TOTAL_LINES = tuple(f"{l}" for l in TEAM_TOTAL_LINES)    # "0.5".."2.5"
+_AH_LINES = {f"{l:+.1f}" for l in ASIAN_HANDICAP_LINES}        # "-2.5".."+2.5"
 
+
+def _over_under(value_label: str, prefix: str, allowed_lines) -> tuple[str, str] | None:
     parts = value_label.split()
     if len(parts) != 2:
         return None
@@ -134,6 +131,49 @@ def _map_over_under(bet_name: str, value_label: str) -> tuple[str, str] | None:
     if direction not in ("Over", "Under") or line not in allowed_lines:
         return None
     return f"{prefix}{line}", direction.upper()
+
+
+def _map_bet(bet_name: str, value_label: str) -> tuple[str, str] | None:
+    """Traduce (tipo de apuesta, valor) de API-Football a (market, selection) nuestros.
+    Devuelve None para todo lo que no modelamos (mitades, cuartos de hándicap, etc.)."""
+    if bet_name == _FULL_MATCH_OU_BET_NAME:
+        return _over_under(value_label, "OU_", _TOTAL_LINES)
+    if bet_name == _CORNERS_OU_BET_NAME:
+        return _over_under(value_label, "CORNERS_OU_", _CORNERS_LINES)
+    if bet_name == "Total - Home":
+        return _over_under(value_label, "TEAM_OU_HOME_", _TEAM_TOTAL_LINES)
+    if bet_name == "Total - Away":
+        return _over_under(value_label, "TEAM_OU_AWAY_", _TEAM_TOTAL_LINES)
+
+    if bet_name == "Asian Handicap":
+        # En API-Football el número es SIEMPRE la línea del local y los dos
+        # valores de un par son los dos lados de esa misma línea:
+        #   ('Home -0.5', 2.20) = local gana;  ('Away -0.5', 1.65) = visitante o empate.
+        # Leerlo como "el visitante da 0.5" invierte el mercado y produce EVs
+        # absurdos (+1000%): ambos lados no pueden ser favoritos a la vez.
+        parts = value_label.split()
+        if len(parts) != 2 or parts[0] not in ("Home", "Away"):
+            return None
+        try:
+            home_line = float(parts[1])
+        except ValueError:
+            return None
+        key = f"{home_line:+.1f}"
+        if key not in _AH_LINES:   # descarta enteros y cuartos (implican devolución)
+            return None
+        return f"AH_{key}", parts[0].upper()
+
+    if bet_name == "Exact Score":
+        # '2:1' -> selección '2-1'. Solo hasta 4-4, que es lo que el modelo deriva.
+        try:
+            h, a = (int(x) for x in value_label.split(":"))
+        except ValueError:
+            return None
+        if h > 4 or a > 4:
+            return None
+        return "EXACT_SCORE", f"{h}-{a}"
+
+    return None
 
 
 def upsert_odds_for_match(
@@ -166,10 +206,10 @@ def upsert_odds_for_match(
                     if selection is None:
                         continue
                 else:
-                    ou = _map_over_under(bet_name, value_label)
-                    if ou is None:
+                    mapped = _map_bet(bet_name, value_label)
+                    if mapped is None:
                         continue
-                    market, selection = ou
+                    market, selection = mapped
 
                 try:
                     odds_value = float(odd_str)

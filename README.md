@@ -685,6 +685,54 @@ córners se tomó a 1.91, cerró a 2.02 (el mercado se movió *en contra*) y aun
 así ganó. Ganar una apuesta que el mercado consideraba peor de lo que
 pagamos no es ventaja; es suerte.
 
+## Vista "Todos los mercados": lo más favorable de cada partido
+
+Petición: que el sistema cubra todo tipo de apuesta (goles, córners,
+ganador…) y muestre lo más favorable de cada partido. El filtro estricto de
+picks casi nunca mostraba nada, y eso no sirve para decidir.
+
+**Lo que existe y lo que no.** Se revisaron los 60+ tipos de apuesta del feed
+de cuotas: hay ganador, doble oportunidad, todas las líneas de goles,
+totales por equipo, hándicap asiático, ambos marcan, marcador exacto,
+córners y mercados por mitades. **No hay cuotas de remates ni de tarjetas**
+en el feed, así que aunque tenemos 122k partidos con esas estadísticas, no
+existe mercado contra el que apostarlas.
+
+**Mercados nuevos (derivados de la misma matriz de marcadores Poisson):**
+líneas de goles 0.5–4.5, totales por equipo 0.5–2.5, hándicap asiático en
+líneas .5 (−2.5 a +2.5) y marcador exacto hasta 4-4. Todos con liquidación y
+tests (106 en total). Solo líneas .5: las enteras y los cuartos implican
+devoluciones que `settlement.py` no contempla.
+
+**Dos capas, deliberadamente separadas:**
+- **Picks del día** — sigue estricto: mercado validado, cuota en rango, EV
+  plausible. Es la recomendación.
+- **Todos los mercados** (`/api/predictions/{id}/markets`, pestaña en el
+  detalle) — TODO lo que tiene cuota, con probabilidad del modelo,
+  implícita, EV y la **validación** de cada mercado: `Validado` (backtest con
+  habilidad ≥ 0), `Sin validar` (sin backtest) o `Sin ventaja` (backtest
+  real: el modelo pierde ahí). Es análisis, no recomendación, y lo dice.
+
+**"Lo más favorable" no es el EV más alto.** El EV más alto es casi siempre
+el mayor error del modelo. El orden es: validados primero, luego sin
+validar, luego sin ventaja; dentro de cada grupo por EV; los sospechosos
+(EV > techo plausible) al final. Así lo primero de la lista es lo más
+favorable *creíble*. Ejemplo real (Rayo–Espanyol): Under 2.5 goles muestra
+EV +6.3% pero etiqueta roja "Sin ventaja −2.4 pts" — un EV positivo en un
+mercado donde el modelo pierde contra las casas es la trampa que la tabla
+hace visible en vez de esconder.
+
+**Además:** lista "Partidos de hoy con análisis" (todo partido con datos,
+haya o no picks) y enlace directo `?match=ID` para abrir/compartir un
+análisis.
+
+**Bug atrapado al probar:** el hándicap asiático salía con EV +1097%. En
+API-Football el número es siempre la línea del **local** y `Away` es el
+otro lado de esa misma línea (`Home -0.5` = local gana; `Away -0.5` =
+visitante o empate). Yo lo leía como "el visitante da 0.5", invirtiendo el
+mercado. El flag de EV sospechoso lo marcó de inmediato — para eso existe —
+y el test del mapper ahora fija la semántica correcta.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

@@ -81,3 +81,56 @@ def market_probabilities(lambda_home: float, lambda_away: float) -> dict[str, fl
         "BTTS_YES": p_btts_yes,
         "BTTS_NO": 1 - p_btts_yes,
     }
+
+
+TOTAL_LINES = (0.5, 1.5, 2.5, 3.5, 4.5)
+TEAM_TOTAL_LINES = (0.5, 1.5, 2.5)
+# Hándicap asiático expresado como línea del LOCAL. Solo líneas .5: las enteras
+# (-1, 0) y los cuartos (-0.75) implican devoluciones totales o parciales que
+# settlement.py no contempla. -0.5 equivale a 1X2 local y +0.5 a doble
+# oportunidad 1X, pero se listan igual porque tienen cuotas propias.
+ASIAN_HANDICAP_LINES = (-2.5, -1.5, -0.5, 0.5, 1.5, 2.5)
+
+
+def extended_market_probabilities(lambda_home: float, lambda_away: float) -> dict[str, float]:
+    """Todos los mercados de goles derivables de la matriz de marcadores:
+    los básicos de market_probabilities() más líneas de total 0.5-4.5,
+    totales por equipo, hándicap asiático y marcador exacto.
+
+    Claves: OU_{línea}_{OVER|UNDER}, TEAM_OU_{HOME|AWAY}_{línea}_{OVER|UNDER},
+    AH_{línea local}_{HOME|AWAY}, EXACT_SCORE_{h}-{a}.
+    """
+    probs = market_probabilities(lambda_home, lambda_away)
+    matrix = scoreline_matrix(lambda_home, lambda_away)
+    n = matrix.shape[0]
+    home_goals = np.arange(n)[:, None]
+    away_goals = np.arange(n)[None, :]
+    total = home_goals + away_goals
+
+    for line in TOTAL_LINES:
+        p_over = float(matrix[total > line].sum())
+        probs[f"OU_{line}_OVER"] = p_over
+        probs[f"OU_{line}_UNDER"] = 1 - p_over
+
+    home_marginal = matrix.sum(axis=1)
+    away_marginal = matrix.sum(axis=0)
+    for line in TEAM_TOTAL_LINES:
+        p_home_over = float(home_marginal[np.arange(n) > line].sum())
+        p_away_over = float(away_marginal[np.arange(n) > line].sum())
+        probs[f"TEAM_OU_HOME_{line}_OVER"] = p_home_over
+        probs[f"TEAM_OU_HOME_{line}_UNDER"] = 1 - p_home_over
+        probs[f"TEAM_OU_AWAY_{line}_OVER"] = p_away_over
+        probs[f"TEAM_OU_AWAY_{line}_UNDER"] = 1 - p_away_over
+
+    for line in ASIAN_HANDICAP_LINES:
+        # El local "gana" el hándicap si sus goles + línea superan a los del visitante.
+        p_home_covers = float(matrix[(home_goals + line) > away_goals].sum())
+        key = f"AH_{line:+.1f}"
+        probs[f"{key}_HOME"] = p_home_covers
+        probs[f"{key}_AWAY"] = 1 - p_home_covers
+
+    for h in range(min(n, 5)):
+        for a in range(min(n, 5)):
+            probs[f"EXACT_SCORE_{h}-{a}"] = float(matrix[h, a])
+
+    return probs

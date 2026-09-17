@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { ApiError, getDailyCandidates, getPerformance, getTopPicks } from './api'
+import { ApiError, getDailyCandidates, getMatchMarkets, getPerformance, getTodaysMatches, getTopPicks } from './api'
 import { CandidateRow } from './components/CandidateRow'
 import { ConfidenceFilter } from './components/ConfidenceFilter'
-import { MatchDetail } from './components/MatchDetail'
+import { MatchDetail, type MatchRef } from './components/MatchDetail'
 import { PerformanceBar } from './components/PerformanceBar'
 import { PickOfTheDayCard } from './components/PickOfTheDayCard'
-import type { ConfidenceLevel, DailyCandidate, Performance, PickOfTheDay } from './types'
+import type { ConfidenceLevel, DailyCandidate, MatchSummary, Performance, PickOfTheDay } from './types'
 
 type PicksState =
   | { status: 'loading' }
@@ -13,12 +13,15 @@ type PicksState =
   | { status: 'error'; message: string }
   | { status: 'ready'; picks: PickOfTheDay[] }
 
+type Selected = { match: MatchRef; pick?: PickOfTheDay }
+
 function App() {
   const [minConfidence, setMinConfidence] = useState<ConfidenceLevel | null>(null)
   const [picksState, setPicksState] = useState<PicksState>({ status: 'loading' })
   const [candidates, setCandidates] = useState<DailyCandidate[]>([])
+  const [matches, setMatches] = useState<MatchSummary[]>([])
   const [performance, setPerformance] = useState<Performance | null>(null)
-  const [selected, setSelected] = useState<PickOfTheDay | null>(null)
+  const [selected, setSelected] = useState<Selected | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
@@ -41,7 +44,23 @@ function App() {
     getPerformance()
       .then(setPerformance)
       .catch(() => setPerformance(null))
+
+    getTodaysMatches()
+      .then(setMatches)
+      .catch(() => setMatches([]))
   }, [refreshKey, minConfidence])
+
+  // Enlace directo a un partido: ?match=ID abre su análisis (compartible).
+  useEffect(() => {
+    const id = Number(new URLSearchParams(window.location.search).get('match'))
+    if (!id) return
+    getMatchMarkets(id)
+      .then((m) => setSelected({ match: { match_id: m.match_id, home_team: m.home_team, away_team: m.away_team, league: m.league, kickoff_utc: m.kickoff_utc } }))
+      .catch(() => undefined)
+  }, [])
+
+  const openPick = (pick: PickOfTheDay) => setSelected({ match: pick, pick })
+  const openMatch = (m: MatchSummary) => setSelected({ match: m })
 
   const topPickKeys = new Set(
     picksState.status === 'ready' ? picksState.picks.map((p) => `${p.match_id}-${p.market}-${p.selection}`) : [],
@@ -117,11 +136,52 @@ function App() {
                 key={`${pick.match_id}-${pick.market}-${pick.selection}`}
                 pick={pick}
                 rank={i + 1}
-                onOpen={() => setSelected(pick)}
+                onOpen={() => openPick(pick)}
               />
             ))}
           </div>
         )}
+
+        <div className="mt-8">
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Partidos de hoy con análisis
+          </h3>
+          <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">
+            Partidos con historial suficiente y cuotas. Abre cualquiera para ver <em>todos</em> sus mercados evaluados,
+            ordenados de más a menos favorable — aunque no haya pasado el filtro estricto de picks.
+          </p>
+          {matches.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+              Hoy no hay partidos con datos suficientes para analizar.
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-700 dark:bg-slate-900">
+              {matches.map((m) => (
+                <li key={m.match_id}>
+                  <button
+                    onClick={() => openMatch(m)}
+                    className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                  >
+                    <div>
+                      <p className="font-medium text-slate-900 dark:text-slate-100">
+                        {m.home_team} vs {m.away_team}
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {m.league} ·{' '}
+                        {new Date(m.kickoff_utc).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })} · {m.n_markets}{' '}
+                        mercados
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-xs text-slate-400 dark:text-slate-500">
+                      {m.has_pick && <span className="mr-2 font-semibold text-indigo-600 dark:text-indigo-400">PICK</span>}
+                      Ver mercados →
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         {otherCandidates.length > 0 && (
           <div className="mt-8">
@@ -150,7 +210,7 @@ function App() {
         )}
       </main>
 
-      {selected && <MatchDetail pick={selected} onClose={() => setSelected(null)} />}
+      {selected && <MatchDetail match={selected.match} pick={selected.pick} onClose={() => setSelected(null)} />}
     </div>
   )
 }

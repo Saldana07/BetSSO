@@ -8,16 +8,20 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.database import get_db
 from app.models import Match, Prediction
-from app.models import Odds
+from app.models import BacktestResult, Odds
 from app.schemas import (
     DailyCandidateResponse,
+    MarketRow,
+    MatchMarketsResponse,
+    MatchSummary,
     OutcomeProbs,
     PerformanceResponse,
     PickOfTheDayResponse,
     SimulationResponse,
     ValueCandidate,
 )
-from ml.serving.predict import get_models, match_context
+from ml.serving.predict import get_models, match_context, predict_match_probabilities
+from ml.value_betting.ev_kelly import expected_value as ev_of
 from ml.simulation.monte_carlo import compare_with, simulate_match
 from ml.value_betting.confidence import SkillEvidence, confidence_label
 from ml.value_betting.ev_kelly import closing_line_value
@@ -178,6 +182,129 @@ def get_simulation(
         model_disagreement=comparison.model_disagreement,
         value_candidates=[ValueCandidate(**c) for c in comparison.value_candidates],
         conclusion=comparison.conclusion,
+    )
+
+
+def _today_bounds():
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return start, start + timedelta(days=1)
+
+
+@router.get("/matches/today", response_model=list[MatchSummary])
+def get_todays_matches(db: Session = Depends(get_db)):
+    """Partidos de hoy que tienen cuotas sincronizadas — es decir, los que
+    pasaron el filtro de historial suficiente (sync_odds solo pide cuotas de
+    esos). Son los partidos que se pueden analizar mercado a mercado, haya o
+    no picks estrictos."""
+    start, end = _today_bounds()
+    rows = db.execute(
+        select(
+            Match,
+            func.count(func.distinct(Odds.market + "/" + Odds.selection)).label("n_markets"),
+        )
+        .join(Odds, Odds.match_id == Match.id)
+        .where(Match.kickoff_utc >= start, Match.kickoff_utc < end, Odds.snapshot_type == "LIVE")
+        .group_by(Match.id)
+        .order_by(Match.kickoff_utc)
+    ).all()
+
+    picked = set(
+        db.execute(
+            select(Prediction.match_id).where(Prediction.is_pick_of_day.is_(True))
+            .join(Match, Prediction.match_id == Match.id)
+            .where(Match.kickoff_utc >= start, Match.kickoff_utc < end)
+        ).scalars().all()
+    )
+    return [
+        MatchSummary(
+            match_id=m.id, home_team=m.home_team.name, away_team=m.away_team.name,
+            league=m.league.name, kickoff_utc=m.kickoff_utc, n_markets=n, has_pick=m.id in picked,
+        )
+        for m, n in rows
+    ]
+
+
+@router.get("/{match_id}/markets", response_model=MatchMarketsResponse)
+def get_match_markets(
+    match_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """TODOS los mercados con cuota de un partido, evaluados por el modelo y
+    ordenados por EV: el primero es "lo más favorable". Junto a cada uno va la
+    validación del mercado, porque un EV alto en un mercado sin habilidad
+    demostrada no es una oportunidad, es el modelo equivocándose.
+
+    Es una vista de ANÁLISIS: muestra todo. Los picks del día siguen siendo el
+    filtro estricto (validado, en rango, EV plausible)."""
+    match = db.get(Match, match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Partido no encontrado.")
+
+    probs = predict_match_probabilities(db, match, get_models(model_version=settings.model_version))
+    diagnostics = probs.get("_diagnostics", {})
+
+    # Mejor cuota por mercado/selección del snapshot más reciente.
+    latest = db.execute(
+        select(func.max(Odds.recorded_at)).where(Odds.match_id == match_id, Odds.snapshot_type == "LIVE")
+    ).scalar_one_or_none()
+    if latest is None:
+        raise HTTPException(status_code=404, detail="Este partido no tiene cuotas sincronizadas.")
+    odds_rows = db.execute(
+        select(Odds).where(Odds.match_id == match_id, Odds.snapshot_type == "LIVE", Odds.recorded_at == latest)
+    ).scalars().all()
+    best: dict[tuple[str, str], Odds] = {}
+    for o in odds_rows:
+        key = (o.market, o.selection)
+        if key not in best or o.odds_value > best[key].odds_value:
+            best[key] = o
+
+    # Evidencia de habilidad por mercado (fila más reciente de backtest_results).
+    evidence: dict[str, BacktestResult] = {}
+    for row in db.execute(
+        select(BacktestResult).where(BacktestResult.model_version == settings.model_version)
+        .order_by(BacktestResult.created_at.desc())
+    ).scalars().all():
+        evidence.setdefault(row.market, row)
+
+    picked = {
+        (p.market, p.selection)
+        for p in db.execute(select(Prediction).where(Prediction.match_id == match_id, Prediction.is_pick_of_day.is_(True))).scalars().all()
+    }
+
+    rows: list[MarketRow] = []
+    for (market, selection), o in best.items():
+        p_model = probs.get(f"{market}_{selection}")
+        if p_model is None:
+            continue
+        odds = float(o.odds_value)
+        ev = ev_of(p_model, odds)
+        ev_row = evidence.get(market)
+        skill = None
+        if ev_row is not None and ev_row.accuracy is not None and ev_row.base_accuracy is not None:
+            skill = float(ev_row.accuracy) - float(ev_row.base_accuracy)
+        validation = "SIN_VALIDAR" if skill is None else ("VALIDADO" if skill >= settings.min_historical_skill else "SIN_VENTAJA")
+        rows.append(MarketRow(
+            market=market, selection=selection, bookmaker=o.bookmaker, odds=odds,
+            model_probability=float(p_model), implied_probability=1.0 / odds, expected_value=ev,
+            historical_skill=skill, backtest_n_bets=ev_row.n_bets if ev_row else None,
+            validation=validation,
+            in_odds_range=settings.odds_min <= odds <= settings.odds_max,
+            ev_suspicious=ev > settings.max_plausible_ev,
+            is_pick=(market, selection) in picked,
+        ))
+
+    # "Lo más favorable" no puede ser simplemente el EV más alto: el EV más alto
+    # es casi siempre el mayor error del modelo (por eso existe ev_suspicious).
+    # Orden: mercados validados primero, luego sin validar, luego sin ventaja;
+    # dentro de cada grupo por EV; los sospechosos al final de su grupo.
+    tier = {"VALIDADO": 0, "SIN_VALIDAR": 1, "SIN_VENTAJA": 2}
+    rows.sort(key=lambda r: (tier[r.validation], r.ev_suspicious, -r.expected_value))
+    return MatchMarketsResponse(
+        match_id=match.id, home_team=match.home_team.name, away_team=match.away_team.name,
+        league=match.league.name, kickoff_utc=match.kickoff_utc,
+        home_history=diagnostics.get("home_history", 0), away_history=diagnostics.get("away_history", 0),
+        rows=rows,
     )
 
 

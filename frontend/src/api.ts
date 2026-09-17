@@ -1,4 +1,12 @@
-import type { ConfidenceLevel, DailyCandidate, Performance, PickOfTheDay, Simulation } from './types'
+import type {
+  ConfidenceLevel,
+  DailyCandidate,
+  MatchMarkets,
+  MatchSummary,
+  Performance,
+  PickOfTheDay,
+  Simulation,
+} from './types'
 
 class ApiError extends Error {
   constructor(
@@ -38,4 +46,12 @@ export function getPerformance(): Promise<Performance> {
 
 export function getSimulation(matchId: number): Promise<Simulation> {
   return getJson<Simulation>(`/api/predictions/${matchId}/simulation`)
+}
+
+export function getTodaysMatches(): Promise<MatchSummary[]> {
+  return getJson<MatchSummary[]>('/api/predictions/matches/today')
+}
+
+export function getMatchMarkets(matchId: number): Promise<MatchMarkets> {
+  return getJson<MatchMarkets>(`/api/predictions/${matchId}/markets`)
 }

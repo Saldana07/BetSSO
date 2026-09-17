@@ -80,6 +80,55 @@ export interface Simulation {
   conclusion: string
 }
 
+export interface MatchSummary {
+  match_id: number
+  home_team: string
+  away_team: string
+  league: string
+  kickoff_utc: string
+  n_markets: number
+  has_pick: boolean
+}
+
+export type Validation = 'VALIDADO' | 'SIN_VALIDAR' | 'SIN_VENTAJA'
+
+export interface MarketRow {
+  market: string
+  selection: string
+  bookmaker: string
+  odds: number
+  model_probability: number
+  implied_probability: number
+  expected_value: number
+  historical_skill: number | null
+  backtest_n_bets: number | null
+  validation: Validation
+  in_odds_range: boolean
+  ev_suspicious: boolean
+  is_pick: boolean
+}
+
+export interface MatchMarkets extends Omit<MatchSummary, 'n_markets' | 'has_pick'> {
+  home_history: number
+  away_history: number
+  rows: MarketRow[]
+}
+
+export const VALIDATION_LABELS: Record<Validation, { label: string; hint: string }> = {
+  VALIDADO: {
+    label: 'Validado',
+    hint: 'Backtest contra cuotas o resultados reales con habilidad ≥ 0: el modelo al menos no es peor que apostar a ciegas aquí.',
+  },
+  SIN_VALIDAR: {
+    label: 'Sin validar',
+    hint: 'No hay backtest para este mercado. El EV es una opinión del modelo sin evidencia de que sepa algo que el mercado no sepa.',
+  },
+  SIN_VENTAJA: {
+    label: 'Sin ventaja',
+    hint: 'Backtest con cuotas reales: el modelo pierde contra el mercado en este mercado. Un EV positivo aquí es casi seguro un error del modelo.',
+  },
+}
+
 export const OUTCOME_LABELS: Record<keyof OutcomeProbs, string> = {
   HOME: 'Victoria local',
   DRAW: 'Empate',
@@ -94,6 +143,7 @@ export const MARKET_LABELS: Record<string, string> = {
   BTTS: 'Ambos marcan',
   'CORNERS_OU_8.5': 'Más/menos de 8.5 córners',
   'CORNERS_OU_9.5': 'Más/menos de 9.5 córners',
+  EXACT_SCORE: 'Marcador exacto',
 }
 
 export const SELECTION_LABELS: Record<string, string> = {

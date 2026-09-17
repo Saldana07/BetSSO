@@ -63,6 +63,31 @@ def bet_won(
         if selection == "UNDER":
             return total_goals < line
 
+    elif market.startswith("TEAM_OU_"):
+        # TEAM_OU_HOME_1.5 / TEAM_OU_AWAY_1.5
+        _, _, side, line = market.split("_")
+        goals = home_goals if side == "HOME" else away_goals
+        if selection == "OVER":
+            return goals > float(line)
+        if selection == "UNDER":
+            return goals < float(line)
+
+    elif market.startswith("AH_"):
+        # AH_-1.5: línea del LOCAL. Solo líneas .5 (sin devoluciones).
+        line = float(market.removeprefix("AH_"))
+        if line != int(line) + 0.5 and line != int(line) - 0.5:
+            raise UnknownMarketError(f"Hándicap {market} no es línea .5: implica devolución y no se liquida")
+        home_covers = home_goals + line > away_goals
+        if selection == "HOME":
+            return home_covers
+        if selection == "AWAY":
+            return not home_covers
+
+    elif market == "EXACT_SCORE":
+        # selection "2-1"
+        h, a = selection.split("-")
+        return home_goals == int(h) and away_goals == int(a)
+
     elif market == "BTTS":
         if selection == "YES":
             return home_goals > 0 and away_goals > 0
