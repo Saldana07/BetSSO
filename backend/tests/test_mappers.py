@@ -1,6 +1,29 @@
 import pytest
 
-from ml.ingestion.mappers import _map_bet
+from ml.ingestion.mappers import MAX_ODDS, _map_bet, upsert_odds_for_match
+
+
+class _FakeDb:
+    def __init__(self):
+        self.rows = []
+
+    def add(self, row):
+        self.rows.append(row)
+
+
+def test_cuotas_absurdas_se_descartan():
+    # Un marcador exacto de un partido con favorito 1.17 llega a cuota 1000+:
+    # no cabe en NUMERIC(6,3) y es ruido para cualquier estrategia.
+    payload = {"bookmakers": [{"name": "X", "bets": [{"name": "Exact Score", "values": [
+        {"value": "1:0", "odd": "9.00"},
+        {"value": "0:4", "odd": "1001.00"},
+        {"value": "4:4", "odd": str(MAX_ODDS + 1)},
+        {"value": "2:2", "odd": "0.5"},   # <= 1 no es una cuota
+    ]}]}]}
+    db = _FakeDb()
+    n = upsert_odds_for_match(db, match_id=1, odds_payload=payload, snapshot_type="LIVE", recorded_at=None)
+    assert n == 1
+    assert db.rows[0].selection == "1-0"
 
 
 @pytest.mark.parametrize(

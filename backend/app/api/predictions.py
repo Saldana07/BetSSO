@@ -296,10 +296,16 @@ def get_match_markets(
 
     # "Lo más favorable" no puede ser simplemente el EV más alto: el EV más alto
     # es casi siempre el mayor error del modelo (por eso existe ev_suspicious).
-    # Orden: mercados validados primero, luego sin validar, luego sin ventaja;
-    # dentro de cada grupo por EV; los sospechosos al final de su grupo.
+    # Pero tampoco puede ser "lo validado aunque tenga EV negativo": en el
+    # ensayo del 17/09 un córners con EV -11.8% salió primero solo por ser el
+    # único mercado validado, y encima ganó — suerte disfrazada de acierto.
+    # Orden: primero lo que tiene EV real (>= piso de pick), dentro de eso por
+    # credibilidad (validado > sin validar > sin ventaja) y luego por EV; los
+    # sospechosos al final de su grupo; todo lo sin EV real, al fondo.
     tier = {"VALIDADO": 0, "SIN_VALIDAR": 1, "SIN_VENTAJA": 2}
-    rows.sort(key=lambda r: (tier[r.validation], r.ev_suspicious, -r.expected_value))
+    # Un EV sospechoso tampoco es favorable: si el flag dice "probablemente error
+    # del modelo", no puede ser el titular. Va al fondo con los sin EV real.
+    rows.sort(key=lambda r: (r.expected_value < settings.min_pick_ev or r.ev_suspicious, tier[r.validation], -r.expected_value))
     return MatchMarketsResponse(
         match_id=match.id, home_team=match.home_team.name, away_team=match.away_team.name,
         league=match.league.name, kickoff_utc=match.kickoff_utc,

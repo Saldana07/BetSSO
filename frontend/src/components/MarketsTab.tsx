@@ -57,10 +57,25 @@ export function MarketsTab({ matchId }: { matchId: number }) {
 
   const { data } = state
   const rows = onlyRange ? data.rows.filter((r) => r.in_odds_range) : data.rows
-  const best = rows[0]
+  // El backend ya ordena: EV real primero, luego credibilidad. Si lo primero no
+  // llega al piso de EV, no hay nada favorable — y hay que decirlo, no destacar
+  // una apuesta perdedora por ser "la menos mala".
+  const MIN_EV = 0.02
+  const best = rows[0] && rows[0].expected_value >= MIN_EV && !rows[0].ev_suspicious ? rows[0] : undefined
 
   return (
     <div className="space-y-5">
+      {!best && rows.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Lo más favorable</p>
+          <p className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">Nada, hoy no.</p>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            Ningún mercado en rango tiene un EV de al menos {(MIN_EV * 100).toFixed(0)}%: el modelo y las casas están
+            de acuerdo en este partido. El mejor era {(rows[0].expected_value * 100).toFixed(1)}%. No apostar también es
+            una decisión.
+          </p>
+        </section>
+      )}
       {best && (
         <section
           className={`rounded-xl border p-4 ${

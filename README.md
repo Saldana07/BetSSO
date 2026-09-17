@@ -770,6 +770,40 @@ existe en el histórico (Levski, OFI, Ferencváros, Torreense, Lech con 6) y
 siguen fuera, correctamente. Para hoy ya era tarde (estaban jugados); desde
 mañana las copas entran al análisis.
 
+## Ensayo retrospectivo: "¿cómo le fue a lo que analizó hoy?"
+
+El sistema no emitió picks el 17/09, pero los partidos ya jugados se pueden
+analizar *como si* hubiera corrido antes del inicio: los features solo usan
+partidos anteriores y API-Football conserva las cuotas pre-partido.
+[retro_analysis.py](backend/jobs/retro_analysis.py) hace eso y liquida "lo
+más favorable" contra el resultado real. **No cuenta como rendimiento real**
+(esos picks no se emitieron a tiempo); es un ensayo.
+
+**Lo que destapó, en orden:**
+
+1. **Cuotas de 1000+** (marcador exacto con favorito a 1.17) desbordaban la
+   columna `NUMERIC(6,3)`. Entrada externa → validar en la frontera: se
+   descartan cuotas > 500 (`MAX_ODDS`), con test.
+2. **Un defecto en el ranking.** La primera corrida dio 5/6 aciertos y
+   +2.50 u — pero "lo más favorable" en Wimbledon–MK Dons fue un córners con
+   **EV −11.8%**, y en Besiktas–Marseille uno con +0.2%. Salían primeros solo
+   porque córners es el único mercado validado, y encima ganaron: suerte
+   disfrazada de acierto. Un EV negativo *nunca* es favorable. Ahora el orden
+   es: EV real (≥ piso de pick) y no sospechoso primero; dentro de eso por
+   credibilidad; lo demás al fondo. Si nada llega al piso, la UI dice
+   **"Nada, hoy no"** en vez de destacar la apuesta menos mala.
+3. **Un EV sospechoso tampoco puede ser titular**: si el flag dice
+   "probablemente error del modelo", no es una oportunidad. Va al fondo.
+
+**Resultado honesto del 17/09** (6 partidos analizables tras el arreglo de
+copas): en 4 hubo algo favorable → **3 aciertos de 4, +0.68 u**; en 2
+(Besiktas–Marseille, Juventus–NEC) el sistema no habría apostado. El
+favorito 1X2 del modelo acertó 3 de 6 — el ~50% que ya conocíamos. Los tres
+mercados acertados eran "sin validar" (hándicap, doble oportunidad, totales)
+y el fallo fue el hándicap de Vejle–Brondby. Con n=4 es anécdota, no
+evidencia; el mismo día, con la versión defectuosa del ranking, la cifra
+era 5/6 y habría sido igual de irrelevante.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

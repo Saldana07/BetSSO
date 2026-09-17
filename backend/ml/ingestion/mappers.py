@@ -118,6 +118,7 @@ _CORNERS_OU_BET_NAME = "Corners Over Under"
 _CORNERS_LINES = ("8.5", "9.5")
 
 
+MAX_ODDS = 500.0  # techo de cuota almacenable; por encima es ruido (y no cabe en NUMERIC(6,3))
 _TOTAL_LINES = tuple(f"{l}" for l in TOTAL_LINES)              # "0.5".."4.5"
 _TEAM_TOTAL_LINES = tuple(f"{l}" for l in TEAM_TOTAL_LINES)    # "0.5".."2.5"
 _AH_LINES = {f"{l:+.1f}" for l in ASIAN_HANDICAP_LINES}        # "-2.5".."+2.5"
@@ -215,7 +216,10 @@ def upsert_odds_for_match(
                     odds_value = float(odd_str)
                 except (TypeError, ValueError):
                     continue
-                if odds_value <= 1.0:
+                # <= 1.0 no es una cuota; > MAX_ODDS (marcadores exactos de
+                # partidos con un favorito de 1.17 llegan a 1000+) desborda
+                # NUMERIC(6,3) y es ruido para cualquier estrategia.
+                if odds_value <= 1.0 or odds_value > MAX_ODDS:
                     continue
 
                 db.add(Odds(
