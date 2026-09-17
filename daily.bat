@@ -2,23 +2,38 @@
 setlocal
 cd /d "%~dp0backend"
 set PY=.venv\Scripts\python.exe
+set AUTO=%1
 
-REM Fechas en UTC (la API y la BD trabajan en UTC).
+REM Fecha en UTC (la API y la BD trabajan en UTC).
 for /f %%i in ('powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')"') do set HOY=%%i
-for /f %%i in ('powershell -NoProfile -Command "(Get-Date).ToUniversalTime().AddDays(-1).ToString('yyyy-MM-dd')"') do set AYER=%%i
 
 echo ============================================
-echo   Flujo diario - %HOY%
+echo   Flujo diario - %HOY%  [%date% %time%]
 echo ============================================
 echo.
 
-docker info >nul 2>&1 || (echo ERROR: Docker no esta corriendo. Ejecuta start.bat primero. & pause & exit /b 1)
+REM --- Docker: arrancarlo si no esta (tras un reinicio no suele estarlo) ---
+REM Sin bloques ( ) anidados: en batch las variables dentro de un bloque se
+REM expanden al leer el bloque, antes de asignarse, y el contador quedaria vacio.
+docker info >nul 2>&1 && goto docker_ok
+echo Docker no responde, abriendo Docker Desktop...
+explorer.exe "shell:AppsFolder\Docker.DockerForWindows.Settings" >nul 2>&1
+set INTENTOS=0
+:wait_docker
+timeout /t 5 /nobreak >nul
+set /a INTENTOS+=1
+docker info >nul 2>&1 && goto docker_ok
+if %INTENTOS% GEQ 36 echo ERROR: Docker no arranco en 3 minutos. & goto :fail
+goto wait_docker
+:docker_ok
 docker compose -f ..\docker-compose.yml up -d db >nul 2>&1
+:wait_db
+docker compose -f ..\docker-compose.yml exec -T db pg_isready -U bet_user -d bet_db >nul 2>&1 || (timeout /t 2 /nobreak >nul & goto wait_db)
 
-echo [1/6] Trayendo resultados de ayer (%AYER%)...
-%PY% -m ml.ingestion.sync_fixtures --date %AYER% || goto :fail
+echo [1/6] Trayendo resultados de los dias con picks pendientes...
+%PY% -m jobs.sync_pending_results || goto :fail
 
-echo [2/6] Liquidando picks ya jugados...
+echo [2/6] Liquidando picks ya jugados (y capturando cuotas de cierre)...
 %PY% -m jobs.settle_predictions || goto :fail
 
 echo [3/6] Trayendo partidos de hoy...
@@ -37,11 +52,11 @@ echo.
 echo ============================================
 echo   Listo. Abre http://localhost:5173
 echo ============================================
-pause
+if /i not "%AUTO%"=="auto" pause
 exit /b 0
 
 :fail
 echo.
 echo *** Un paso fallo. Revisa el mensaje de arriba. ***
-pause
+if /i not "%AUTO%"=="auto" pause
 exit /b 1

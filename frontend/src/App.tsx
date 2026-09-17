@@ -105,7 +105,7 @@ function App() {
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               {minConfidence
                 ? 'Prueba bajando el filtro de confianza, o vuelve más tarde cuando haya más mercados con backtest validado.'
-                : 'Ningún partido cumplió el filtro de cuota 1.50–2.00 con +EV. Corre jobs/generate_daily_pick.py si aún no lo hiciste hoy.'}
+                : 'Ningún partido de hoy tiene equipos con historial suficiente y una cuota con ventaja plausible. Es normal en días de pocos partidos: el sistema prefiere no recomendar antes que recomendar a ciegas.'}
             </p>
           </div>
         )}

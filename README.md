@@ -645,6 +645,46 @@ conviene apostar más temprano; si es negativo o cero, el modelo no aporta
 nada sobre el mercado en ningún momento del día, y esa será la respuesta
 definitiva. `daily.bat` lo acumula solo.
 
+## Automatización: el flujo corre solo
+
+**El incidente.** Dos días sin ejecutar `daily.bat` y la app "no funcionaba":
+los picks del día 15 seguían como `SCHEDULED` (nadie trajo sus resultados,
+así que nunca se liquidaron ni entraron al % de acierto) y los días 16 y 17
+no tenían ni un partido sincronizado. El código estaba bien; el flujo
+dependía de una persona.
+
+**Dos restricciones del plan Free que lo agravan:**
+- `/fixtures?date=` solo acepta fechas en una ventana de **±1 día**. Si el
+  flujo se salta un día, los resultados de esa fecha quedan fuera de la
+  ventana para siempre… por fecha. `/fixtures?id=` no tiene esa restricción:
+  [sync_pending_results.py](backend/jobs/sync_pending_results.py) recupera
+  cada partido con picks pendientes **por ID** (1 petición por partido, no
+  200 por día), sin importar cuántos días hayan pasado.
+- Como consecuencia, la captura del cierre y la liquidación también dependen
+  de correr el flujo; ahora son resistentes a días saltados.
+
+**La solución de fondo:** una tarea programada de Windows
+(`Apuesta Segura - flujo diario`) ejecuta `daily.bat auto` todos los días a
+las 08:00 y, si el PC estaba apagado, **al encenderlo** (`StartWhenAvailable`).
+`daily.bat` arranca Docker si hace falta, se pone al día con los picks
+pendientes, liquida, captura cierres, trae los partidos de hoy y genera
+picks. El registro queda en `backend/daily.log`. Para quitarla:
+
+    Unregister-ScheduledTask -TaskName "Apuesta Segura - flujo diario"
+
+**Sobre los días sin picks.** El 17 de septiembre (jueves) hubo 180 partidos
+pero solo 10 por jugarse a la hora del flujo y ninguno con historial
+suficiente: cero picks. Es el comportamiento correcto — el sistema prefiere
+callarse a recomendar a ciegas — y la UI lo explica así en vez de sugerir
+comandos.
+
+**Estado real tras ponerse al día:** 3 picks recomendados liquidados (2G/1P,
++0.56 u), CLV medio **−1.8%**, 0 de 3 batieron el cierre. Con 3 datos es
+ruido, pero un pick ilustra por qué el CLV importa más que ganar: Under 9.5
+córners se tomó a 1.91, cerró a 2.02 (el mercado se movió *en contra*) y aun
+así ganó. Ganar una apuesta que el mercado consideraba peor de lo que
+pagamos no es ventaja; es suerte.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
