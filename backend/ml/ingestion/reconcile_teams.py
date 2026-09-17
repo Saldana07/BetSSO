@@ -24,7 +24,7 @@ Uso:
 import argparse
 import unicodedata
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.database import SessionLocal
 from app.models import League, Match, Team
@@ -58,6 +58,13 @@ TEAM_ALIASES = {
     "guadalajara chivas": "guadalajara",
     "u.n.a.m. - pumas": "pumas unam",
     "estoril": "estoril praia",
+    # Equipos de copas europeas (aparecen vía Champions/Europa League)
+    "1899 hoffenheim": "tsg hoffenheim",
+    "red bull salzburg": "fc salzburg",
+    "bournemouth": "afc bournemouth",
+    "nec nijmegen": "nec",
+    "plzen": "viktoria plzen",
+    "union st. gilloise": "union saint gilloise",
 }
 
 
@@ -151,6 +158,14 @@ def reconcile(apply_changes: bool = False) -> dict:
                 if not still_referenced:
                     db.delete(live_league)
 
+        # --- Segunda pasada: competiciones NO mapeadas (copas, Champions, Europa League) ---
+        # La primera pasada solo cruza equipos dentro de una liga mapeada, así que
+        # un equipo que aparece hoy únicamente en Europa League (Hoffenheim, Ajax
+        # en copa) nunca se reconciliaba y llegaba con historial 0. Aquí se cruza
+        # por nombre contra TODO el histórico y se prefiere la fila con más
+        # partidos (su liga doméstica), que es la que carga el historial útil.
+        stats["cup_teams_merged"] = _reconcile_unmapped_competitions(db, apply_changes, stats)
+
         if apply_changes:
             db.commit()
         else:
@@ -158,6 +173,68 @@ def reconcile(apply_changes: bool = False) -> dict:
     finally:
         db.close()
     return stats
+
+
+# Nombres que designan clubes DISTINTOS en varios países: cruzarlos por nombre
+# fusionaría, por ejemplo, el Nacional de Uruguay con el de Portugal.
+AMBIGUOUS_NAMES = {
+    "nacional", "olimpia", "independiente", "universitario", "sporting", "athletic",
+    "national", "liverpool", "barcelona", "everton", "arsenal", "america", "atletico",
+    "juventud", "real", "deportivo", "union", "racing", "estudiantes", "san lorenzo", "platense",
+}
+
+
+def _reconcile_unmapped_competitions(db, apply_changes: bool, stats: dict) -> int:
+    from sqlalchemy import func as _f
+
+    historical_by_key: dict[str, list[tuple[Team, int]]] = {}
+    hist_rows = db.execute(
+        select(Team, _f.count(Match.id))
+        .join(League, Team.league_id == League.id)
+        .outerjoin(Match, or_(Match.home_team_id == Team.id, Match.away_team_id == Team.id))
+        .where(League.country == SOURCE_TAG)
+        .group_by(Team.id)
+    ).all()
+    for team, n in hist_rows:
+        historical_by_key.setdefault(normalize(team.name), []).append((team, n))
+
+    live_teams = db.execute(
+        select(Team).join(League, Team.league_id == League.id)
+        .where(League.country != SOURCE_TAG, Team.api_team_id.isnot(None))
+    ).scalars().all()
+
+    merged = 0
+    for live in live_teams:
+        raw = normalize(live.name)
+        key = TEAM_ALIASES.get(raw, raw)
+        # Los guardas de ambigüedad/longitud se aplican al nombre ORIGINAL: un
+        # alias explícito ya es una decisión humana (ej. 'nec nijmegen' -> 'nec').
+        if raw not in TEAM_ALIASES and (raw in AMBIGUOUS_NAMES or len(raw) < 5):
+            continue
+        candidates = historical_by_key.get(key)
+        if not candidates:
+            continue
+        canonical, n_matches = max(candidates, key=lambda c: c[1])
+        if canonical.api_team_id is not None or n_matches == 0:
+            continue
+        print(f"  [copa] '{live.name}' -> histórico '{canonical.name}' id={canonical.id} ({n_matches} partidos)")
+        if not apply_changes:
+            merged += 1
+            continue
+
+        # Repunta SOLO los equipos: el partido conserva su liga (Europa League
+        # sigue siendo Europa League; el promedio de goles de referencia sale de ahí).
+        for m in db.execute(select(Match).where(Match.home_team_id == live.id)).scalars().all():
+            m.home_team_id = canonical.id
+        for m in db.execute(select(Match).where(Match.away_team_id == live.id)).scalars().all():
+            m.away_team_id = canonical.id
+        api_id = live.api_team_id
+        live.api_team_id = None
+        db.flush()
+        canonical.api_team_id = api_id
+        db.delete(live)
+        merged += 1
+    return merged
 
 
 def main():
@@ -174,6 +251,7 @@ def main():
     print(f"Equipos sin histórico: {stats['teams_unmatched']}")
     print(f"Partidos repuntados:   {stats['matches_repointed']}")
     print(f"Equipos fusionados:    {stats['teams_merged']}  (heredan api_team_id: no se recrean en el próximo sync)")
+    print(f"Equipos de copa fusionados: {stats.get('cup_teams_merged', 0)}  (competiciones no mapeadas, cruzados por nombre)")
 
 
 if __name__ == "__main__":

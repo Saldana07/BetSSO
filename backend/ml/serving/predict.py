@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import joblib
-from sqlalchemy import select
+from sqlalchemy import distinct, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Match
@@ -86,10 +86,15 @@ class TrainedModels:
         self.corners = CornerModel()
 
 
-def _replay_league_state(past_matches: list[Match]) -> dict:
+def _replay_league_state(past_matches: list[Match], target_league_id: int | None = None) -> dict:
     """Reconstruye Elo, forma y promedios de goles a partir del histórico
-    FINISHED de una liga, en el mismo orden y con la misma lógica que
-    build_dataset.py. Devuelve el estado final (a "hoy") por equipo."""
+    FINISHED, en el mismo orden y con la misma lógica que build_dataset.py.
+    Devuelve el estado final (a "hoy") por equipo.
+
+    `past_matches` puede mezclar varias ligas (ver compute_pre_match_features):
+    el Elo/forma/tasas son por equipo y viajan entre competiciones, pero el
+    promedio de goles de referencia debe ser el de la liga del partido
+    (`target_league_id`), no una mezcla de Eredivisie con Europa League."""
     elo: dict[int, float] = {}
     form_history: dict[int, deque] = {}
     goals_scored: dict[int, deque] = {}
@@ -125,9 +130,10 @@ def _replay_league_state(past_matches: list[Match]) -> dict:
         goals_scored.setdefault(away_id, deque(maxlen=ROLLING_GOALS_WINDOW)).append(m.away_goals)
         goals_conceded.setdefault(away_id, deque(maxlen=ROLLING_GOALS_WINDOW)).append(m.home_goals)
 
-        home_goals_sum += m.home_goals
-        away_goals_sum += m.away_goals
-        n += 1
+        if target_league_id is None or m.league_id == target_league_id:
+            home_goals_sum += m.home_goals
+            away_goals_sum += m.away_goals
+            n += 1
         last_match_date[home_id] = m.kickoff_utc
         last_match_date[away_id] = m.kickoff_utc
         matches_played[home_id] = matches_played.get(home_id, 0) + 1
@@ -149,9 +155,25 @@ def _replay_league_state(past_matches: list[Match]) -> dict:
 
 
 def compute_pre_match_features(db: Session, match: Match) -> dict:
+    # El historial sigue al EQUIPO, no a la pareja equipo-liga. Antes solo se
+    # replayaba la liga del partido: Ajax tenía 206 partidos en Eredivisie y 0
+    # en Europa League, así que TODOS los partidos de copa (Champions, Europa
+    # League, copas nacionales) se descartaban por "sin historial" — justo los
+    # que más interesan. Ahora se replayan completas la liga del partido y las
+    # ligas domésticas de ambos equipos: cada liga sigue siendo un sistema
+    # cerrado (Elo consistente) y el equipo se lleva su rating a la copa.
+    team_ids = (match.home_team_id, match.away_team_id)
+    team_leagues = db.execute(
+        select(distinct(Match.league_id)).where(
+            or_(Match.home_team_id.in_(team_ids), Match.away_team_id.in_(team_ids)),
+            Match.status == "FINISHED",
+        )
+    ).scalars().all()
+    league_ids = set(team_leagues) | {match.league_id}
+
     past_matches = db.execute(
         select(Match).where(
-            Match.league_id == match.league_id,
+            Match.league_id.in_(league_ids),
             Match.status == "FINISHED",
             Match.home_goals.isnot(None),
             Match.away_goals.isnot(None),
@@ -159,7 +181,7 @@ def compute_pre_match_features(db: Session, match: Match) -> dict:
         ).order_by(Match.kickoff_utc)
     ).scalars().all()
 
-    state = _replay_league_state(past_matches)
+    state = _replay_league_state(past_matches, target_league_id=match.league_id)
     home_id, away_id = match.home_team_id, match.away_team_id
 
     home_elo = state["elo"].get(home_id, 1500.0)

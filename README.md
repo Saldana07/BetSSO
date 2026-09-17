@@ -733,6 +733,43 @@ visitante o empate). Yo lo leía como "el visitante da 0.5", invirtiendo el
 mercado. El flag de EV sospechoso lo marcó de inmediato — para eso existe —
 y el test del mapper ahora fija la semántica correcta.
 
+## "¿Por qué no hay apuestas hoy?": tres causas y un arreglo
+
+El 17 de septiembre (jueves) el sistema no emitió nada. Al investigar:
+
+1. **Hora.** El flujo se corrió a mano a las 18:10 UTC; 162 de 180 partidos
+   ya se habían jugado. La tarea automática corre a las 08:00 (13:00 UTC),
+   antes del fútbol europeo. No se repite.
+2. **Jueves.** Los 10 partidos restantes eran Liga 3 de Georgia, femenino
+   nórdico, sub-17, Burundi… Sin historial. Rechazarlos es correcto.
+3. **La causa estructural:** hubo **9 partidos de Europa League** con equipos
+   que sí tenemos, y los 9 salieron con historial 0. Dos defectos del mismo
+   tipo:
+   - El historial se calculaba **por pareja equipo-liga**: Ajax tenía 206
+     partidos en Eredivisie y 0 en Europa League. Eso descartaba *todas* las
+     copas — Champions, Europa League, copas nacionales — justo lo que más
+     interesa. Ahora [`compute_pre_match_features`](backend/ml/serving/predict.py)
+     replaya la liga del partido **más las ligas domésticas de ambos
+     equipos**: cada liga sigue siendo un sistema cerrado (Elo consistente) y
+     el equipo se lleva su rating a la copa. El promedio de goles de
+     referencia sigue siendo el de la competición del partido, no una mezcla.
+     Costo: ~50 ms por partido.
+   - La **reconciliación también era por liga**: solo cruzaba equipos dentro
+     de ligas mapeadas, así que Hoffenheim (apareció solo vía Europa League)
+     nunca se reconcilió. Nueva pasada global para competiciones no mapeadas:
+     cruza por nombre contra todo el histórico, prefiere la fila con más
+     partidos (la liga doméstica; 538 tiene al mismo club en varias filas) y
+     bloquea nombres ambiguos ("Nacional", "Olimpia", "Platense"…). 101
+     equipos fusionados, más alias para grafías distintas (`1899 Hoffenheim`
+     → `TSG Hoffenheim`, `Red Bull Salzburg` → `FC Salzburg`).
+
+**Resultado:** de los 9 partidos de Europa League, **4 pasan a ser
+analizables** (Besiktas–Marseille 196/236, Real Sociedad–Bournemouth
+244/170, Plzen–Union SG, Juventus–NEC). Los otros 5 tienen un rival que no
+existe en el histórico (Levski, OFI, Ferencváros, Torreense, Lech con 6) y
+siguen fuera, correctamente. Para hoy ya era tarde (estaban jugados); desde
+mañana las copas entran al análisis.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
