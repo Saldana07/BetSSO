@@ -9,11 +9,11 @@ import type {
 } from './types'
 
 class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-  ) {
+  status: number
+
+  constructor(message: string, status: number) {
     super(message)
+    this.status = status
   }
 }
 
@@ -28,16 +28,26 @@ async function getJson<T>(path: string): Promise<T> {
 
 export { ApiError }
 
-function withConfidenceParam(path: string, minConfidence?: ConfidenceLevel): string {
-  return minConfidence ? `${path}?min_confidence=${minConfidence}` : path
+/** Día en UTC (la API y la BD trabajan en UTC): hoy + offset días, como YYYY-MM-DD. */
+export function utcDay(offsetDays: number): string {
+  const d = new Date()
+  d.setUTCDate(d.getUTCDate() + offsetDays)
+  return d.toISOString().slice(0, 10)
 }
 
-export function getTopPicks(minConfidence?: ConfidenceLevel): Promise<PickOfTheDay[]> {
-  return getJson<PickOfTheDay[]>(withConfidenceParam('/api/predictions/top-picks', minConfidence))
+function withParams(path: string, params: Record<string, string | undefined>): string {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v)
+  const qs = q.toString()
+  return qs ? `${path}?${qs}` : path
 }
 
-export function getDailyCandidates(minConfidence?: ConfidenceLevel): Promise<DailyCandidate[]> {
-  return getJson<DailyCandidate[]>(withConfidenceParam('/api/predictions/daily-candidates', minConfidence))
+export function getTopPicks(minConfidence?: ConfidenceLevel, day?: string): Promise<PickOfTheDay[]> {
+  return getJson<PickOfTheDay[]>(withParams('/api/predictions/top-picks', { min_confidence: minConfidence, day }))
+}
+
+export function getDailyCandidates(minConfidence?: ConfidenceLevel, day?: string): Promise<DailyCandidate[]> {
+  return getJson<DailyCandidate[]>(withParams('/api/predictions/daily-candidates', { min_confidence: minConfidence, day }))
 }
 
 export function getPerformance(): Promise<Performance> {
@@ -48,8 +58,8 @@ export function getSimulation(matchId: number): Promise<Simulation> {
   return getJson<Simulation>(`/api/predictions/${matchId}/simulation`)
 }
 
-export function getTodaysMatches(): Promise<MatchSummary[]> {
-  return getJson<MatchSummary[]>('/api/predictions/matches/today')
+export function getTodaysMatches(day?: string): Promise<MatchSummary[]> {
+  return getJson<MatchSummary[]>(withParams('/api/predictions/matches/today', { day }))
 }
 
 export function getMatchMarkets(matchId: number): Promise<MatchMarkets> {

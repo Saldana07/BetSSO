@@ -26,7 +26,7 @@ from sqlalchemy import distinct, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Match
-from ml.features.corners import CornerModel
+from ml.features.count_stats import MODELS_DIR, CountStatModels
 from ml.features.elo import elo_win_draw_loss_probs, update_elo
 from ml.features.form import MatchResult, build_form_features
 from ml.features.poisson_xg import expected_goals, extended_market_probabilities, market_probabilities, team_strengths
@@ -41,8 +41,13 @@ from ml.training.build_dataset import (
 from ml.training.train_classifier import FEATURE_COLUMNS
 
 
+# Carpeta de modelos anclada al paquete, no al cwd: la API y los jobs
+# deben funcionar igual lanzados desde backend/ o desde la raíz del repo.
+DEFAULT_MODEL_DIR = str(MODELS_DIR)
+
+
 @lru_cache(maxsize=1)
-def get_models(model_dir: str = "models", model_version: str = "v1") -> "TrainedModels":
+def get_models(model_dir: str = DEFAULT_MODEL_DIR, model_version: str = "v1") -> "TrainedModels":
     """Singleton para la API: cargar los joblib y el CSV de córners (45 MB)
     en cada request sería inaceptable."""
     return TrainedModels(model_dir, model_version)
@@ -81,9 +86,10 @@ class TrainedModels:
         self.encoder = joblib.load(f"{model_dir}/label_encoder_{model_version}.joblib")
         self.goals_home_model = joblib.load(f"{model_dir}/goals_home_{model_version}.joblib")
         self.goals_away_model = joblib.load(f"{model_dir}/goals_away_{model_version}.joblib")
-        # El modelo de córners no se entrena: son tasas rodantes + Poisson
-        # sobre el CSV de football-data.co.uk (ver ml/features/corners.py).
-        self.corners = CornerModel()
+        # Córners, tiros, tiros a puerta, tarjetas y faltas no se entrenan:
+        # son tasas rodantes + Poisson + calibración sobre el CSV de
+        # football-data.co.uk (ver ml/features/count_stats.py).
+        self.count_stats = CountStatModels()
 
 
 def _replay_league_state(past_matches: list[Match], target_league_id: int | None = None) -> dict:
@@ -269,21 +275,20 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
     # asiático, marcador exacto) salen de la misma matriz de marcadores.
     goals_market_probs = extended_market_probabilities(goals_home_pred, goals_away_pred)
 
-    # Córners: solo si AMBOS equipos tienen historial suficiente en la fuente
-    # de córners. Si no, simplemente no hay claves CORNERS_* y el job no
-    # emite picks de córners para este partido (sin datos no se apuesta).
-    # Las probabilidades salen ya pasadas por la calibración isotónica
-    # (models/corners_calibration.joblib) si existe; ver ml/training/calibrate_corners.py.
-    expected_corners = models.corners.expected_corners(
+    # Córners / tiros / tiros a puerta / tarjetas / faltas: solo si AMBOS
+    # equipos tienen historial suficiente en la fuente. Si no, simplemente no
+    # hay claves de ese mercado y el job no lo apuesta (sin datos no se
+    # apuesta). Salen ya calibradas (models/<stat>_calibration.joblib).
+    count_probs = models.count_stats.market_probabilities(
         match.home_team.name, match.away_team.name, match.kickoff_utc
     )
-    corner_probs = models.corners.market_probabilities(
+    expected_totals = models.count_stats.expected_totals(
         match.home_team.name, match.away_team.name, match.kickoff_utc
-    ) or {}
+    )
 
     return {
         **goals_market_probs,
-        **corner_probs,
+        **count_probs,
         # El 1X2 y la doble oportunidad los da el clasificador calibrado, que
         # es mejor que la Poisson pura para resultado (la Poisson es solo una
         # de sus features); sobreescriben las claves derivadas de la matriz.
@@ -298,6 +303,7 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
             "home_history": features["_home_history"],
             "away_history": features["_away_history"],
             "home_elo_diff": features["elo_diff"],
-            "expected_corners": sum(expected_corners) if expected_corners else None,
+            "expected_corners": expected_totals["corners"],
+            "expected_totals": expected_totals,
         },
     }

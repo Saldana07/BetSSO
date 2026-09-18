@@ -26,6 +26,13 @@ class PickOfTheDayResponse(BaseModel):
     historical_skill: float | None
     backtest_n_bets: int | None
     confidence_label: str  # 'ALTA' | 'MEDIA' | 'BAJA', ver ml/value_betting/confidence.py
+    # Resultado, si el partido ya se jugó y el pick se liquidó (vista "Ayer").
+    is_settled: bool = False
+    is_win: bool | None = None
+    profit_loss: float | None = None
+    final_score: str | None = None      # "2-1"
+    actual_stat: int | None = None      # total real de córners/tiros/tarjetas/faltas del mercado
+    closing_odds: float | None = None
 
 
 class DailyCandidateResponse(PickOfTheDayResponse):
@@ -83,6 +90,9 @@ class MatchSummary(BaseModel):
     kickoff_utc: datetime
     n_markets: int          # mercados con cuota disponibles para analizar
     has_pick: bool          # ¿alguno pasó el filtro estricto de picks del día?
+    status: str = "SCHEDULED"
+    final_score: str | None = None
+
 
 
 class MarketRow(BaseModel):

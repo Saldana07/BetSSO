@@ -23,7 +23,7 @@ from app.database import SessionLocal
 from app.models import Match, Odds, Prediction
 from ml.ingestion.api_football_client import APIFootballClient, APIFootballError
 from ml.ingestion.mappers import upsert_odds_for_match
-from ml.value_betting.settlement import MissingStatsError, UnknownMarketError, bet_won, profit_loss
+from ml.value_betting.settlement import COUNT_MARKET_STATS, MissingStatsError, UnknownMarketError, bet_won, profit_loss
 
 
 def _capture_closing_odds(db: Session, pending: list[Prediction]) -> int:
@@ -77,33 +77,55 @@ def _capture_closing_odds(db: Session, pending: list[Prediction]) -> int:
     return filled
 
 
-def _fill_missing_corners(db: Session, pending: list[Prediction]) -> int:
-    """Trae de API-Football los córners de los partidos terminados que tengan
-    picks de córners pendientes y aún no los tengan cargados. Cuesta 1
-    petición por partido, pero solo para partidos donde de verdad apostamos
-    (normalmente 0-3 al día), así que no compromete la cuota diaria."""
-    matches_needing_corners = {
-        p.match.id: p.match
-        for p in pending
-        if p.market.startswith("CORNERS_") and p.match.home_corners is None and p.match.api_match_id
+def _needs_stats(prediction: Prediction) -> bool:
+    prefix, _, _ = prediction.market.rpartition("_")
+    stat = COUNT_MARKET_STATS.get(prefix)
+    return stat is not None and prediction.match.stat_totals().get(stat) is None
+
+
+def _fill_missing_stats(db: Session, pending: list[Prediction]) -> int:
+    """Trae de API-Football las estadísticas (córners, tiros, tiros a puerta,
+    tarjetas, faltas) de los partidos terminados que tengan picks de conteo
+    pendientes y aún no las tengan cargadas. Cuesta 1 petición por partido,
+    pero solo para partidos donde de verdad apostamos (normalmente 0-5 al
+    día), así que no compromete la cuota diaria."""
+    matches_needing_stats = {
+        p.match.id: p.match for p in pending if _needs_stats(p) and p.match.api_match_id
     }
-    if not matches_needing_corners:
+    if not matches_needing_stats:
         return 0
 
     filled = 0
     with APIFootballClient() as client:
-        for match in matches_needing_corners.values():
-            try:
-                corners = client.get_fixture_corners(match.api_match_id)
-            except APIFootballError as exc:
-                print(f"  [!] No se pudieron traer córners del partido {match.id}: {exc}")
-                continue
-            if corners is None:
-                continue
-            match.home_corners, match.away_corners = corners
-            filled += 1
+        for match in matches_needing_stats.values():
+            if load_fixture_stats(client, match):
+                filled += 1
     db.flush()
     return filled
+
+
+def load_fixture_stats(client: APIFootballClient, match: Match) -> bool:
+    """Carga en `match` las estadísticas de /fixtures/statistics (1 petición).
+    Devuelve False si la API no las tiene aún o no cuadran con los equipos."""
+    try:
+        stats = client.get_fixture_stats(match.api_match_id)
+    except APIFootballError as exc:
+        print(f"  [!] No se pudieron traer estadísticas del partido {match.id}: {exc}")
+        return False
+    if not stats:
+        return False
+    home = stats.get(match.home_team.api_team_id)
+    away = stats.get(match.away_team.api_team_id)
+    if home is None or away is None:
+        print(f"  [!] Estadísticas del partido {match.id} no coinciden con sus equipos; se deja pendiente")
+        return False
+    match.home_corners, match.away_corners = home["corners"], away["corners"]
+    match.home_shots, match.away_shots = home["shots"], away["shots"]
+    match.home_shots_on_target, match.away_shots_on_target = home["shots_on_target"], away["shots_on_target"]
+    match.home_yellow, match.away_yellow = home["yellow"], away["yellow"]
+    match.home_red, match.away_red = home["red"], away["red"]
+    match.home_fouls, match.away_fouls = home["fouls"], away["fouls"]
+    return True
 
 
 def settle(db: Session) -> dict:
@@ -121,7 +143,7 @@ def settle(db: Session) -> dict:
     stats = {"settled": 0, "wins": 0, "losses": 0, "errors": 0, "waiting_stats": 0, "pnl": 0.0}
     now = datetime.now(timezone.utc)
 
-    stats["corners_fetched"] = _fill_missing_corners(db, pending)
+    stats["stats_fetched"] = _fill_missing_stats(db, pending)
 
     # El cierre se captura para TODO pick de partido terminado que aún no lo
     # tenga (también los ya liquidados antes de existir esta métrica).
@@ -138,7 +160,7 @@ def settle(db: Session) -> dict:
             won = bet_won(
                 prediction.market, prediction.selection,
                 match.home_goals, match.away_goals,
-                home_corners=match.home_corners, away_corners=match.away_corners,
+                stats=match.stat_totals(),
             )
         except MissingStatsError:
             # Falta la estadística (ej. la API aún no publicó los córners):
@@ -183,7 +205,7 @@ def main():
     if stats["errors"]:
         print(f"{stats['errors']} picks no se pudieron liquidar (mercado desconocido) y siguen pendientes.")
     if stats["waiting_stats"]:
-        print(f"{stats['waiting_stats']} picks de córners esperan a que la API publique las estadísticas del partido.")
+        print(f"{stats['waiting_stats']} picks de conteo (córners/tiros/tarjetas/faltas) esperan a que la API publique las estadísticas del partido.")
     if stats.get("closing_captured"):
         print(f"Cuotas de cierre capturadas para {stats['closing_captured']} picks (Closing Line Value).")
 

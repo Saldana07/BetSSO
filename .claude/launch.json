@@ -9,9 +9,10 @@
     },
     {
       "name": "backend-api",
-      "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "cd backend && .venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"],
-      "port": 8000
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--app-dir", "backend"],
+      "port": 8000,
+      "autoPort": false
     }
   ]
 }

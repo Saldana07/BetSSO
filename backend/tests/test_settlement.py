@@ -25,6 +25,35 @@ def test_corners_sin_datos_no_se_liquida():
         bet_won("CORNERS_OU_9.5", "OVER", 1, 1)
     with pytest.raises(MissingStatsError):
         bet_won("CORNERS_OU_9.5", "OVER", 1, 1, home_corners=5, away_corners=None)
+    with pytest.raises(MissingStatsError):
+        bet_won("CORNERS_OU_9.5", "OVER", 1, 1, stats={"corners": None, "shots": 20})
+
+
+@pytest.mark.parametrize(
+    "market,selection,stats,expected",
+    [
+        ("SHOTS_OU_24.5", "OVER", {"shots": 25}, True),
+        ("SHOTS_OU_24.5", "OVER", {"shots": 24}, False),
+        ("SHOTS_OU_24.5", "UNDER", {"shots": 24}, True),
+        ("SOT_OU_8.5", "OVER", {"shots_on_target": 9}, True),
+        ("SOT_OU_8.5", "UNDER", {"shots_on_target": 9}, False),
+        ("CARDS_OU_4.5", "OVER", {"cards": 5}, True),      # 3 amarillas + 1 roja = 5
+        ("CARDS_OU_4.5", "UNDER", {"cards": 4}, True),
+        ("FOULS_OU_25.5", "OVER", {"fouls": 26}, True),
+        ("FOULS_OU_25.5", "OVER", {"fouls": 25}, False),
+        ("CORNERS_OU_9.5", "OVER", {"corners": 10}, True),  # córners también por stats
+    ],
+)
+def test_mercados_de_conteo(market, selection, stats, expected):
+    assert bet_won(market, selection, 0, 0, stats=stats) is expected
+
+
+def test_mercado_de_conteo_sin_su_estadistica_espera():
+    # Tener los córners no sirve para liquidar tiros.
+    with pytest.raises(MissingStatsError):
+        bet_won("SHOTS_OU_24.5", "OVER", 0, 0, stats={"corners": 10})
+    with pytest.raises(MissingStatsError):
+        bet_won("FOULS_OU_25.5", "UNDER", 0, 0, stats={"fouls": None})
 
 
 @pytest.mark.parametrize(

@@ -14,7 +14,7 @@ Flujo:
      tomando como máximo UN candidato por partido (para no llenar el top 5
      con 5 mercados del mismo juego)
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -22,12 +22,17 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.database import SessionLocal
 from app.models import BacktestResult, Match, Odds, Prediction
+from ml.features.count_stats import ALL_SPECS
 from ml.value_betting.confidence import SkillEvidence
 from ml.value_betting.ev_kelly import evaluate_bet, is_safe_bet_candidate
 
 settings = get_settings()
 
-MARKETS = ["1X2", "DOUBLE_CHANCE", "OU_1.5", "OU_2.5", "BTTS", "CORNERS_OU_8.5", "CORNERS_OU_9.5"]
+# Mercados que el job evalúa. Solo los que tengan backtest_results con
+# habilidad > 0 producen picks; el resto se evalúa pero queda SIN_VALIDAR.
+MARKETS = ["1X2", "DOUBLE_CHANCE", "OU_1.5", "OU_2.5", "BTTS"] + [
+    spec.market(line) for spec in ALL_SPECS for line in spec.lines
+]
 
 
 def _skill_evidence(db: Session, market: str) -> SkillEvidence:
@@ -50,8 +55,13 @@ def _skill_evidence(db: Session, market: str) -> SkillEvidence:
     )
 
 
-def _todays_matches(db: Session) -> list[Match]:
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+def _todays_matches(db: Session, day: date | None = None) -> list[Match]:
+    """Partidos SCHEDULED del día (UTC); hoy por defecto. Con --date el job
+    genera los picks de mañana con las cuotas de hoy (se regeneran mañana
+    con las cuotas frescas: el borrado de abajo lo hace idempotente)."""
+    if day is None:
+        day = datetime.now(timezone.utc).date()
+    today_start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
     today_end = today_start + timedelta(days=1)
     stmt = select(Match).where(
         Match.kickoff_utc >= today_start,
@@ -94,7 +104,7 @@ def _latest_odds(db: Session, match_id: int, market: str) -> list[Odds]:
     return list(db.execute(stmt).scalars().all())
 
 
-def run(model_probabilities_fn):
+def run(model_probabilities_fn, day: date | None = None):
     """model_probabilities_fn(match) -> dict[market_selection] = probability
 
     Se inyecta como parámetro para desacoplar el job de la implementación
@@ -103,7 +113,7 @@ def run(model_probabilities_fn):
     """
     db = SessionLocal()
     try:
-        matches = _todays_matches(db)
+        matches = _todays_matches(db, day)
 
         # Idempotencia: si el job se corre más de una vez el mismo día (ej.
         # las cuotas se movieron y se quiere recalcular), hay que limpiar las
@@ -233,9 +243,16 @@ def run(model_probabilities_fn):
 
 
 def main():
-    from ml.serving.predict import TrainedModels, predict_match_probabilities
+    import argparse
 
-    models = TrainedModels(model_dir="models", model_version=settings.model_version)
+    from ml.serving.predict import DEFAULT_MODEL_DIR, TrainedModels, predict_match_probabilities
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--date", default=None, help="Día (UTC) a generar, YYYY-MM-DD. Por defecto hoy.")
+    args = parser.parse_args()
+    day = date.fromisoformat(args.date) if args.date else None
+
+    models = TrainedModels(model_dir=DEFAULT_MODEL_DIR, model_version=settings.model_version)
 
     def model_probabilities_fn(match: Match) -> dict:
         db = SessionLocal()
@@ -244,7 +261,7 @@ def main():
         finally:
             db.close()
 
-    run(model_probabilities_fn)
+    run(model_probabilities_fn, day)
 
 
 if __name__ == "__main__":

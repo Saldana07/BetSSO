@@ -182,19 +182,49 @@ class APIFootballClient:
             params["search"] = search
         return self._get("/leagues", params)
 
-    def get_fixture_corners(self, fixture_id: int) -> tuple[int, int] | None:
-        """(córners local, córners visitante) de un partido terminado, o None si no hay datos."""
+    # Tipos de /fixtures/statistics -> nombre nuestro.
+    FIXTURE_STAT_TYPES = {
+        "Corner Kicks": "corners",
+        "Total Shots": "shots",
+        "Shots on Goal": "shots_on_target",
+        "Yellow Cards": "yellow",
+        "Red Cards": "red",
+        "Fouls": "fouls",
+    }
+
+    def get_fixture_stats(self, fixture_id: int) -> dict[int, dict[str, int | None]] | None:
+        """Estadísticas de un partido terminado por api_team_id:
+        {team_id: {"corners": 5, "shots": 12, "shots_on_target": 4, "yellow": 2, "red": 0, "fouls": 11}}.
+        None si la API aún no publicó nada. Un valor ausente queda en None
+        (la liquidación de ese mercado espera; no se inventa un 0)."""
         results = self._get("/fixtures/statistics", {"fixture": fixture_id})
         if len(results) != 2:
             return None
-        corners = []
+        out: dict[int, dict[str, int | None]] = {}
         for team in results:
-            value = next((s["value"] for s in team.get("statistics", []) if s.get("type") == "Corner Kicks"), None)
-            corners.append(int(value) if value is not None else None)
-        if None in corners:
+            team_id = (team.get("team") or {}).get("id")
+            if team_id is None:
+                return None
+            stats: dict[str, int | None] = {k: None for k in self.FIXTURE_STAT_TYPES.values()}
+            for s in team.get("statistics", []):
+                key = self.FIXTURE_STAT_TYPES.get(s.get("type"))
+                if key is None:
+                    continue
+                value = s.get("value")
+                # La API manda None cuando no hubo (ej. 0 tarjetas rojas aparece como None).
+                stats[key] = int(value) if value is not None else 0
+            out[team_id] = stats
+        return out
+
+    def get_fixture_corners(self, fixture_id: int) -> tuple[int, int] | None:
+        """Compatibilidad: (córners local, córners visitante) asumiendo el orden de la API."""
+        stats = self.get_fixture_stats(fixture_id)
+        if not stats:
             return None
-        # La API lista primero al local y luego al visitante.
-        return corners[0], corners[1]
+        values = [t["corners"] for t in stats.values()]
+        if None in values:
+            return None
+        return values[0], values[1]
 
     def get_team_statistics(self, team: int, league: int, season: int) -> dict | None:
         results = self._get("/teams/statistics", {"team": team, "league": league, "season": season})

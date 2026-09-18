@@ -19,6 +19,14 @@ export interface PickOfTheDay {
   historical_skill: number | null
   backtest_n_bets: number | null
   confidence_label: ConfidenceLevel
+  /** Resultado, si el partido ya se jugó y el pick se liquidó (vista "Ayer"). */
+  is_settled: boolean
+  is_win: boolean | null
+  profit_loss: number | null
+  final_score: string | null
+  /** Total real de la estadística del mercado de conteo (córners, tiros...). */
+  actual_stat: number | null
+  closing_odds: number | null
 }
 
 export interface DailyCandidate extends PickOfTheDay {
@@ -88,6 +96,8 @@ export interface MatchSummary {
   kickoff_utc: string
   n_markets: number
   has_pick: boolean
+  status: string
+  final_score: string | null
 }
 
 export type Validation = 'VALIDADO' | 'SIN_VALIDAR' | 'SIN_VENTAJA'

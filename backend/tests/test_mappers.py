@@ -37,6 +37,16 @@ def test_cuotas_absurdas_se_descartan():
         ("Goals Over/Under First Half", "Over 1.5", None),   # mitad: no se modela
         ("Corners Over Under", "Under 9.5", ("CORNERS_OU_9.5", "UNDER")),
         ("Corners Over Under", "Over 10.5", None),           # línea no validada
+        ("Corners Over Under", "Over 9", None),              # línea entera: push
+        ("Total Shots", "Over 24.5", ("SHOTS_OU_24.5", "OVER")),
+        ("Total Shots", "Under 26.5", ("SHOTS_OU_26.5", "UNDER")),
+        ("Total Shots", "Over 30.5", None),                  # fuera del rango modelado
+        ("Total ShotOnGoal", "Over 8.5", ("SOT_OU_8.5", "OVER")),
+        ("Home Shots On Target", "Over 4.5", None),          # por equipo: no se modela
+        ("Cards Over/Under", "Under 4.5", ("CARDS_OU_4.5", "UNDER")),
+        ("Cards Over/Under", "Over 4.0", None),              # entera: push
+        ("Fouls. Total", "Over 25.5", ("FOULS_OU_25.5", "OVER")),
+        ("Fouls. Home Total", "Over 12.5", None),
         ("Total - Home", "Over 1.5", ("TEAM_OU_HOME_1.5", "OVER")),
         ("Total - Away", "Under 0.5", ("TEAM_OU_AWAY_0.5", "UNDER")),
         ("Total - Home", "Over 3.5", None),

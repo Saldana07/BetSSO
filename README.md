@@ -896,6 +896,72 @@ conserva habilidad (+4.9 puntos, Brier 0.2467 vs 0.2499). Habrá **menos
 picks**, y los que salgan tendrán EV más pequeño y más creíble. Sigue siendo
 paper trading: la única prueba pendiente contra las casas es acumular CLV.
 
+## "Siempre me das córners": tiros, tiros a puerta, tarjetas y faltas
+
+La queja era legítima: córners era el único mercado validado, así que el
+sistema solo emitía córners. Los mercados de goles (1X2, O/U, BTTS) siguen
+bloqueados porque **demostraron no ganarle a la cuota de cierre** (backtest
+real sobre 28,512 partidos); abrirlos sería mentir. La salida honesta era
+buscar mercados con datos históricos reales, cuotas reales y señal medible.
+
+**Datos.** `Matches.csv` (football-data.co.uk, 122k partidos) trae, además de
+córners, tiros, tiros a puerta, faltas, amarillas y rojas de cada partido.
+Y API-Football ofrece cuotas de `Total Shots`, `Total ShotOnGoal`, `Cards
+Over/Under` y `Fouls. Total` — comprobado en partidos reales: Bet365 y dos
+casas más las publican en ligas grandes (tarjetas también en segundas;
+faltas solo 1-2 casas).
+
+**Modelo.** El de córners, generalizado: [count_stats.py](backend/ml/features/count_stats.py)
+con un `StatSpec` por estadística (columnas del CSV, líneas .5 que se
+modelan, prior de liga). Tarjetas = amarillas + 2×rojas, la convención de
+las casas. Misma receta: tasas rodantes de 20 partidos, encogimiento
+bayesiano, Poisson del total, calibración isotónica por línea
+([calibrate_count_stats.py](backend/ml/training/calibrate_count_stats.py)).
+
+**Validación** ([validate_count_stats.py](backend/ml/backtesting/validate_count_stats.py),
+2025-26, ~6,900 partidos fuera de muestra, línea central de cada mercado):
+
+| Estadística | Acierto modelo | Tasa base | Brier modelo / base |
+|---|---|---|---|
+| Córners 9.5 | 55.6% | 50.7% | 0.2467 / 0.2499 |
+| **Tiros totales 24.5** | **63.0%** | 51.0% | 0.2234 / 0.2499 |
+| Tiros a puerta 8.5 | 57.2% | 52.3% | 0.2440 / 0.2495 |
+| Tarjetas 4.5 | 60.1% | 56.5% | 0.2391 / 0.2457 |
+| **Faltas 25.5** | **69.5%** | 59.5% | 0.2029 / 0.2410 |
+
+Tiros y faltas dependen del estilo de juego (y del árbitro), mucho más
+persistente que dónde cae un córner. Solo se persisten en `backtest_results`
+las líneas que superan la tasa base en Brier **y** accuracy (26 de 30);
+las demás quedan `SIN_VALIDAR` y no se apuestan.
+
+**La advertencia que importa.** Ganarle a la tasa base de una línea fija no
+es ganarle a Bet365, que también conoce estas tendencias y centra su línea
+en cada partido (por eso ofrece 24.5 en un partido y 26.5 en otro). La
+única prueba contra la casa es el CLV acumulado, exactamente como con
+córners. La etiqueta "confianza ALTA" mide habilidad sobre la tasa base,
+no sobre la casa.
+
+**Liquidación.** `settle_predictions` trae de `/fixtures/statistics` (1
+petición por partido apostado) todas las estadísticas a la vez y las guarda
+en `matches` (`home_shots`, `home_shots_on_target`, `home_yellow`,
+`home_red`, `home_fouls` y sus `away_*`). Un pick cuya estadística aún no
+está publicada se deja pendiente, no se inventa.
+
+## Ayer / Hoy / Mañana
+
+La app tiene un selector de día. **Mañana** se genera como adelanto con las
+cuotas de hoy (las casas abren 1-3 días antes) y se regenera al día
+siguiente con las cuotas frescas; el flujo diario pasó de 6 a 8 pasos
+(`daily.bat`: partidos, cuotas y picks también de mañana; la API permite
+`/fixtures?date=` a ±1 día). **Ayer** muestra lo que el sistema recomendó
+y cómo terminó: acertó/falló, unidades, marcador, estadística real (7
+córners, 23 tiros...) y cuota de cierre. Los endpoints `top-picks`,
+`matches/today` y `daily-candidates` aceptan `?day=YYYY-MM-DD` (UTC); el
+job `generate_daily_pick` acepta `--date`.
+
+Consumo de API: ~11 (hoy) + ~36 (mañana) peticiones de cuotas + partidos y
+liquidación; cabe en las 100 diarias del plan gratuito, con margen.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
@@ -903,8 +969,11 @@ paper trading: la única prueba pendiente contra las casas es acumular CLV.
   Todo backtest hasta ahora fue contra un mercado *simulado* (538 + margen);
   este respondería "¿le gana al mercado de verdad?" con miles de apuestas.
   Es el paso más importante que queda.
-- Validar BTTS y Over/Under de goles (hoy no generan picks porque no tienen
-  backtest — correcto, pero limita la cobertura).
+- BTTS y Over/Under de goles: no generan picks porque el backtest con cuotas
+  reales dio yield negativo. Solo entrarían con datos que el mercado no
+  pondere bien (alineaciones, xG en vivo).
+- CLV por mercado (tiros / tarjetas / faltas por separado) en `/performance`,
+  para saber cuál de los mercados nuevos aguanta contra la casa.
 - Migraciones Alembic; hoy son `ALTER TABLE` a mano y `schema.sql` puede
   divergir de la BD real.
 - `elo_history` / `teams.elo_rating` nunca se escriben: el Elo se recalcula

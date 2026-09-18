@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from ml.backtesting.backtest import BacktestConfig, passes_production_gate, run_backtest
-from ml.features.corners import CSV_PATH
+from ml.features.count_stats import CSV_PATH
 from ml.features.poisson_xg import market_probabilities
 from ml.features.replay import FeatureReplayer, MatchRecord
 from ml.training.train_classifier import FEATURE_COLUMNS

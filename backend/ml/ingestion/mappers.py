@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Injury, League, Match, Odds, Team
+from ml.features.count_stats import CARDS, CORNERS, FOULS, SHOTS, SHOTS_ON_TARGET, StatSpec
 from ml.features.poisson_xg import ASIAN_HANDICAP_LINES, TEAM_TOTAL_LINES, TOTAL_LINES
 
 
@@ -110,12 +111,19 @@ _SELECTION_MAP = {
 # como 'Goals Over/Under First Half' / '- Second Half' que deben excluirse explícitamente
 # (un simple "in" haría match con esas también y contaminaría las cuotas de partido completo).
 _FULL_MATCH_OU_BET_NAME = "Goals Over/Under"
-# Total de córners del partido completo. Excluye 'Home Corners Over/Under',
-# 'Total Corners (1st Half)', etc. Las líneas se limitan a las validadas en
-# ml/features/corners.py (LINES) y SOLO a .5: una línea entera ('Over 9')
-# puede empatar ("push") y settlement.py no contempla devoluciones.
-_CORNERS_OU_BET_NAME = "Corners Over Under"
-_CORNERS_LINES = ("8.5", "9.5")
+# Totales del partido completo de córners, tiros, tiros a puerta, tarjetas y
+# faltas (nombres EXACTOS de API-Football; excluye 'Home Corners Over/Under',
+# 'Total Corners (1st Half)', 'Home Shots On Target', etc.). Las líneas se
+# limitan a las que modela ml/features/count_stats.py (StatSpec.lines) y SOLO
+# a .5: una línea entera ('Over 9') puede empatar ("push") y settlement.py
+# no contempla devoluciones.
+_COUNT_STAT_BETS: dict[str, StatSpec] = {
+    "Corners Over Under": CORNERS,
+    "Total Shots": SHOTS,
+    "Total ShotOnGoal": SHOTS_ON_TARGET,
+    "Cards Over/Under": CARDS,
+    "Fouls. Total": FOULS,
+}
 
 
 MAX_ODDS = 500.0  # techo de cuota almacenable; por encima es ruido (y no cabe en NUMERIC(6,3))
@@ -139,8 +147,9 @@ def _map_bet(bet_name: str, value_label: str) -> tuple[str, str] | None:
     Devuelve None para todo lo que no modelamos (mitades, cuartos de hándicap, etc.)."""
     if bet_name == _FULL_MATCH_OU_BET_NAME:
         return _over_under(value_label, "OU_", _TOTAL_LINES)
-    if bet_name == _CORNERS_OU_BET_NAME:
-        return _over_under(value_label, "CORNERS_OU_", _CORNERS_LINES)
+    spec = _COUNT_STAT_BETS.get(bet_name)
+    if spec is not None:
+        return _over_under(value_label, f"{spec.market_prefix}_", tuple(str(l) for l in spec.lines))
     if bet_name == "Total - Home":
         return _over_under(value_label, "TEAM_OU_HOME_", _TEAM_TOTAL_LINES)
     if bet_name == "Total - Away":

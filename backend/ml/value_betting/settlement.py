@@ -19,6 +19,18 @@ class MissingStatsError(ValueError):
     """El mercado necesita una estadística (ej. córners) que el partido aún no tiene."""
 
 
+# Mercados de conteo -> clave de `stats` con el total del partido. Las
+# tarjetas ya vienen combinadas (amarilla = 1, roja = 2), igual que en el
+# modelo y que en la convención de las casas.
+COUNT_MARKET_STATS = {
+    "CORNERS_OU": "corners",
+    "SHOTS_OU": "shots",
+    "SOT_OU": "shots_on_target",
+    "CARDS_OU": "cards",
+    "FOULS_OU": "fouls",
+}
+
+
 def bet_won(
     market: str,
     selection: str,
@@ -26,18 +38,25 @@ def bet_won(
     away_goals: int,
     home_corners: int | None = None,
     away_corners: int | None = None,
+    stats: dict[str, int | float | None] | None = None,
 ) -> bool:
+    """`stats`: totales del partido por estadística ({"shots": 24, ...}); los
+    córners pueden venir ahí o por los parámetros históricos home/away_corners."""
     total_goals = home_goals + away_goals
 
-    if market.startswith("CORNERS_OU_"):
-        if home_corners is None or away_corners is None:
-            raise MissingStatsError(f"El mercado {market} necesita los córners del partido y aún no están")
-        line = float(market.removeprefix("CORNERS_OU_"))
-        total_corners = home_corners + away_corners
+    prefix, _, line_str = market.rpartition("_")
+    if prefix in COUNT_MARKET_STATS:
+        stat = COUNT_MARKET_STATS[prefix]
+        total = (stats or {}).get(stat)
+        if total is None and stat == "corners" and home_corners is not None and away_corners is not None:
+            total = home_corners + away_corners
+        if total is None:
+            raise MissingStatsError(f"El mercado {market} necesita '{stat}' del partido y aún no está")
+        line = float(line_str)
         if selection == "OVER":
-            return total_corners > line
+            return total > line
         if selection == "UNDER":
-            return total_corners < line
+            return total < line
         raise UnknownMarketError(f"Selección desconocida '{selection}' para {market}")
 
     if market == "1X2":

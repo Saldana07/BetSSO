@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,11 +25,35 @@ from ml.value_betting.ev_kelly import expected_value as ev_of
 from ml.simulation.monte_carlo import compare_with, simulate_match
 from ml.value_betting.confidence import SkillEvidence, confidence_label
 from ml.value_betting.ev_kelly import closing_line_value
+from ml.value_betting.settlement import COUNT_MARKET_STATS
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
 ConfidenceLevel = Literal["ALTA", "MEDIA", "BAJA"]
 _CONFIDENCE_RANK = {"BAJA": 0, "MEDIA": 1, "ALTA": 2}
+
+
+def _day_bounds(day: date | None = None):
+    """[inicio, fin) en UTC del día pedido (hoy por defecto). La API y la BD
+    trabajan en UTC; el frontend manda la fecha que el usuario eligió
+    (ayer / hoy / mañana) ya en UTC."""
+    if day is None:
+        day = datetime.now(timezone.utc).date()
+    start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    return start, start + timedelta(days=1)
+
+_DAY_QUERY = Query(default=None, description="Día (UTC) a consultar, YYYY-MM-DD. Por defecto hoy.")
+
+
+def _actual_stat(market: str, match: Match) -> int | None:
+    """Total real de la estadística del mercado de conteo (córners, tiros...)
+    si ya está cargado; None para mercados de goles o si aún no llegó."""
+    prefix, _, _ = market.rpartition("_")
+    stat = COUNT_MARKET_STATS.get(prefix)
+    if stat is None:
+        return None
+    value = match.stat_totals().get(stat)
+    return int(value) if value is not None else None
 
 
 def _to_response(pred: Prediction, cls=PickOfTheDayResponse):
@@ -51,6 +75,15 @@ def _to_response(pred: Prediction, cls=PickOfTheDayResponse):
         historical_accuracy=float(pred.historical_accuracy) if pred.historical_accuracy is not None else None,
         historical_skill=float(pred.historical_skill) if pred.historical_skill is not None else None,
         backtest_n_bets=pred.backtest_n_bets,
+        is_settled=pred.settled_at is not None,
+        is_win=pred.is_win,
+        profit_loss=float(pred.profit_loss) if pred.profit_loss is not None else None,
+        final_score=(
+            f"{match.home_goals}-{match.away_goals}"
+            if match.status == "FINISHED" and match.home_goals is not None else None
+        ),
+        actual_stat=_actual_stat(pred.market, match),
+        closing_odds=float(pred.closing_odds) if pred.closing_odds is not None else None,
         confidence_label=confidence_label(
             float(pred.expected_value),
             # Se reconstruye la evidencia desde la foto guardada en el pick:
@@ -74,6 +107,7 @@ def get_top_picks(
     min_confidence: ConfidenceLevel | None = Query(
         default=None, description="Filtra dejando solo picks con esta confianza o mayor (BAJA < MEDIA < ALTA)."
     ),
+    day: date | None = _DAY_QUERY,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
@@ -86,8 +120,7 @@ def get_top_picks(
     solo lee ese resultado precomputado (lectura rápida, sin recalcular el
     modelo en el request).
     """
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
+    today_start, today_end = _day_bounds(day)
 
     stmt = (
         select(Prediction)
@@ -107,10 +140,11 @@ def get_top_picks(
         responses = [r for r in responses if _CONFIDENCE_RANK[r.confidence_label] >= min_rank]
 
     if not responses:
+        when = "hoy" if day is None else f"el {day.isoformat()}"
         detail = (
-            f"No hay picks con confianza {min_confidence} o mayor hoy."
+            f"No hay picks con confianza {min_confidence} o mayor {when}."
             if min_confidence
-            else "No hay ninguna apuesta segura disponible hoy que cumpla los criterios (cuota 1.50-2.00, +EV)."
+            else f"No hay ninguna apuesta segura {when} que cumpla los criterios (cuota 1.50-2.00, +EV)."
         )
         raise HTTPException(status_code=404, detail=detail)
 
@@ -185,18 +219,14 @@ def get_simulation(
     )
 
 
-def _today_bounds():
-    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    return start, start + timedelta(days=1)
-
 
 @router.get("/matches/today", response_model=list[MatchSummary])
-def get_todays_matches(db: Session = Depends(get_db)):
-    """Partidos de hoy que tienen cuotas sincronizadas — es decir, los que
-    pasaron el filtro de historial suficiente (sync_odds solo pide cuotas de
-    esos). Son los partidos que se pueden analizar mercado a mercado, haya o
-    no picks estrictos."""
-    start, end = _today_bounds()
+def get_todays_matches(day: date | None = _DAY_QUERY, db: Session = Depends(get_db)):
+    """Partidos del día (hoy por defecto) que tienen cuotas sincronizadas —
+    es decir, los que pasaron el filtro de historial suficiente (sync_odds
+    solo pide cuotas de esos). Son los partidos que se pueden analizar
+    mercado a mercado, haya o no picks estrictos."""
+    start, end = _day_bounds(day)
     rows = db.execute(
         select(
             Match,
@@ -219,6 +249,8 @@ def get_todays_matches(db: Session = Depends(get_db)):
         MatchSummary(
             match_id=m.id, home_team=m.home_team.name, away_team=m.away_team.name,
             league=m.league.name, kickoff_utc=m.kickoff_utc, n_markets=n, has_pick=m.id in picked,
+            status=m.status,
+            final_score=f"{m.home_goals}-{m.away_goals}" if m.status == "FINISHED" and m.home_goals is not None else None,
         )
         for m, n in rows
     ]
@@ -365,14 +397,14 @@ def get_daily_candidates(
     min_confidence: ConfidenceLevel | None = Query(
         default=None, description="Filtra dejando solo candidatos con esta confianza o mayor (BAJA < MEDIA < ALTA)."
     ),
+    day: date | None = _DAY_QUERY,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
     """Lista TODOS los candidatos del día que pasaron el filtro de cuota/EV
     (incluye los del top-picks), ordenados por EV descendente — útil para
     el frontend mostrar el resto de opciones evaluadas."""
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
+    today_start, today_end = _day_bounds(day)
 
     stmt = (
         select(Prediction)

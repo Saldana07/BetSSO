@@ -4,9 +4,26 @@ function line(market: string, prefix: string): string {
   return market.slice(prefix.length)
 }
 
+// Mercados de conteo: prefijo -> nombre de la estadística (plural).
+const COUNT_STATS: Record<string, string> = {
+  CORNERS_OU_: 'córners',
+  SHOTS_OU_: 'tiros',
+  SOT_OU_: 'tiros a puerta',
+  CARDS_OU_: 'tarjetas',
+  FOULS_OU_: 'faltas',
+}
+
+function countStat(market: string): { prefix: string; name: string } | null {
+  for (const [prefix, name] of Object.entries(COUNT_STATS)) {
+    if (market.startsWith(prefix)) return { prefix, name }
+  }
+  return null
+}
+
 export function formatMarket(market: string): string {
   if (MARKET_LABELS[market]) return MARKET_LABELS[market]
-  if (market.startsWith('CORNERS_OU_')) return `Más/menos de ${line(market, 'CORNERS_OU_')} córners`
+  const stat = countStat(market)
+  if (stat) return `Más/menos de ${line(market, stat.prefix)} ${stat.name}`
   if (market.startsWith('TEAM_OU_HOME_')) return `Goles del local (línea ${line(market, 'TEAM_OU_HOME_')})`
   if (market.startsWith('TEAM_OU_AWAY_')) return `Goles del visitante (línea ${line(market, 'TEAM_OU_AWAY_')})`
   if (market.startsWith('OU_')) return `Más/menos de ${line(market, 'OU_')} goles`
@@ -15,7 +32,8 @@ export function formatMarket(market: string): string {
 }
 
 export function formatSelection(market: string, selection: string): string {
-  if (market.startsWith('CORNERS_OU_')) return `${SELECTION_LABELS[selection] ?? selection} ${line(market, 'CORNERS_OU_')} córners`
+  const stat = countStat(market)
+  if (stat) return `${SELECTION_LABELS[selection] ?? selection} ${line(market, stat.prefix)} ${stat.name}`
   if (market.startsWith('TEAM_OU_')) {
     const l = market.replace(/^TEAM_OU_(HOME|AWAY)_/, '')
     return `${SELECTION_LABELS[selection] ?? selection} ${l} goles`

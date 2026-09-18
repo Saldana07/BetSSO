@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ApiError, getDailyCandidates, getMatchMarkets, getPerformance, getTodaysMatches, getTopPicks } from './api'
+import { ApiError, getDailyCandidates, getMatchMarkets, getPerformance, getTodaysMatches, getTopPicks, utcDay } from './api'
 import { CandidateRow } from './components/CandidateRow'
 import { ConfidenceFilter } from './components/ConfidenceFilter'
+import { DaySelector, dayLabel, type DayOffset } from './components/DaySelector'
 import { MatchDetail, type MatchRef } from './components/MatchDetail'
 import { PerformanceBar } from './components/PerformanceBar'
 import { PickOfTheDayCard } from './components/PickOfTheDayCard'
@@ -17,6 +18,7 @@ type Selected = { match: MatchRef; pick?: PickOfTheDay }
 
 function App() {
   const [minConfidence, setMinConfidence] = useState<ConfidenceLevel | null>(null)
+  const [dayOffset, setDayOffset] = useState<DayOffset>(0)
   const [picksState, setPicksState] = useState<PicksState>({ status: 'loading' })
   const [candidates, setCandidates] = useState<DailyCandidate[]>([])
   const [matches, setMatches] = useState<MatchSummary[]>([])
@@ -24,10 +26,13 @@ function App() {
   const [selected, setSelected] = useState<Selected | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
+  const day = utcDay(dayOffset)
+  const when = dayLabel(dayOffset)
+
   useEffect(() => {
     setPicksState({ status: 'loading' })
 
-    getTopPicks(minConfidence ?? undefined)
+    getTopPicks(minConfidence ?? undefined, day)
       .then((picks) => setPicksState({ status: 'ready', picks }))
       .catch((err) => {
         if (err instanceof ApiError && err.status === 404) {
@@ -37,7 +42,7 @@ function App() {
         }
       })
 
-    getDailyCandidates(minConfidence ?? undefined)
+    getDailyCandidates(minConfidence ?? undefined, day)
       .then(setCandidates)
       .catch(() => setCandidates([]))
 
@@ -45,10 +50,10 @@ function App() {
       .then(setPerformance)
       .catch(() => setPerformance(null))
 
-    getTodaysMatches()
+    getTodaysMatches(day)
       .then(setMatches)
       .catch(() => setMatches([]))
-  }, [refreshKey, minConfidence])
+  }, [refreshKey, minConfidence, day])
 
   // Enlace directo a un partido: ?match=ID abre su análisis (compartible).
   useEffect(() => {
@@ -94,15 +99,28 @@ function App() {
         )}
 
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Picks del día
-          </h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Picks de {when}
+            </h2>
+            <DaySelector value={dayOffset} onChange={setDayOffset} />
+          </div>
           <ConfidenceFilter value={minConfidence} onChange={setMinConfidence} />
         </div>
+        {dayOffset === 1 && (
+          <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
+            Adelanto con las cuotas de hoy: mañana por la mañana se regeneran con las cuotas frescas y pueden cambiar.
+          </p>
+        )}
+        {dayOffset === -1 && (
+          <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
+            Lo que el sistema recomendó ayer y cómo terminó. Los picks se liquidan cuando la API publica las estadísticas del partido.
+          </p>
+        )}
 
         {picksState.status === 'loading' && (
           <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-            Cargando picks del día...
+            Cargando picks de {when}...
           </div>
         )}
 
@@ -119,12 +137,14 @@ function App() {
         {picksState.status === 'empty' && (
           <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center dark:border-slate-700 dark:bg-slate-900">
             <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-              {minConfidence ? `No hay picks con confianza ${minConfidence.toLowerCase()} o mayor hoy` : 'No hay apuesta segura hoy'}
+              {minConfidence ? `No hay picks con confianza ${minConfidence.toLowerCase()} o mayor ${when}` : `No hay apuesta segura ${when}`}
             </p>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               {minConfidence
                 ? 'Prueba bajando el filtro de confianza, o vuelve más tarde cuando haya más mercados con backtest validado.'
-                : 'Ningún partido de hoy tiene equipos con historial suficiente y una cuota con ventaja plausible. Es normal en días de pocos partidos: el sistema prefiere no recomendar antes que recomendar a ciegas.'}
+                : dayOffset === 1
+                  ? 'Las cuotas de mañana aún no están sincronizadas o ningún mercado validado tiene ventaja. El flujo diario las trae cada mañana.'
+                  : `Ningún partido de ${when} tiene equipos con historial suficiente y una cuota con ventaja plausible. Es normal en días de pocos partidos: el sistema prefiere no recomendar antes que recomendar a ciegas.`}
             </p>
           </div>
         )}
@@ -144,7 +164,7 @@ function App() {
 
         <div className="mt-8">
           <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Partidos de hoy con análisis
+            Partidos de {when} con análisis
           </h3>
           <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">
             Partidos con historial suficiente y cuotas. Abre cualquiera para ver <em>todos</em> sus mercados evaluados,
@@ -152,7 +172,7 @@ function App() {
           </p>
           {matches.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-              Hoy no hay partidos con datos suficientes para analizar.
+              {dayOffset === 0 ? 'Hoy' : dayOffset === 1 ? 'Mañana' : 'Ayer'} no hay partidos con datos suficientes para analizar.
             </div>
           ) : (
             <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-700 dark:bg-slate-900">
@@ -170,6 +190,7 @@ function App() {
                         {m.league} ·{' '}
                         {new Date(m.kickoff_utc).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })} · {m.n_markets}{' '}
                         mercados
+                        {m.final_score && <span className="ml-2 font-semibold text-slate-700 dark:text-slate-200">Final {m.final_score}</span>}
                       </p>
                     </div>
                     <span className="shrink-0 text-xs text-slate-400 dark:text-slate-500">
@@ -186,7 +207,7 @@ function App() {
         {otherCandidates.length > 0 && (
           <div className="mt-8">
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Otros candidatos evaluados hoy
+              Otros candidatos evaluados {when}
             </h3>
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
               <table className="w-full text-left">

@@ -1,6 +1,43 @@
 import type { PickOfTheDay } from '../types'
 import { ConfidenceBadge } from './ConfidenceBadge'
-import { MarketLabel } from './MarketLabel'
+import { MarketLabel, formatMarket } from './MarketLabel'
+
+/** Nombre de la estadística de un mercado de conteo, para "Final: 7 córners". */
+function statName(market: string): string {
+  const label = formatMarket(market)
+  return label.replace(/^Más\/menos de [\d.]+ /, '')
+}
+
+function ResultBanner({ pick }: { pick: PickOfTheDay }) {
+  if (pick.is_settled && pick.is_win !== null) {
+    const won = pick.is_win
+    return (
+      <div
+        className={`mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl px-4 py-2 text-sm font-medium ${
+          won
+            ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+            : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300'
+        }`}
+      >
+        <span>{won ? '✓ Acertó' : '✗ Falló'}</span>
+        {pick.profit_loss !== null && <span>{pick.profit_loss >= 0 ? '+' : ''}{pick.profit_loss.toFixed(2)} u</span>}
+        {pick.final_score && <span>Final {pick.final_score}</span>}
+        {pick.actual_stat !== null && <span>{pick.actual_stat} {statName(pick.market)}</span>}
+        {pick.closing_odds !== null && (
+          <span className="font-normal opacity-80">cierre {pick.closing_odds.toFixed(2)}</span>
+        )}
+      </div>
+    )
+  }
+  if (pick.final_score) {
+    return (
+      <div className="mt-4 rounded-xl bg-slate-100 px-4 py-2 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+        Final {pick.final_score} · pendiente de liquidar (esperando las estadísticas del partido)
+      </div>
+    )
+  }
+  return null
+}
 
 function formatKickoff(iso: string): string {
   return new Date(iso).toLocaleString('es', {
@@ -74,6 +111,8 @@ export function PickOfTheDayCard({
           </p>
         </div>
       </div>
+
+      <ResultBanner pick={pick} />
 
       <div className="mt-4 space-y-1 text-xs text-slate-400 dark:text-slate-500">
         {pick.kelly_fraction !== null && (

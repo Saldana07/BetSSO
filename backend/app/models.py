@@ -59,8 +59,21 @@ class Match(Base):
     away_goals: Mapped[int | None] = mapped_column(SmallInteger)
     home_xg: Mapped[float | None] = mapped_column(Numeric(4, 2))
     away_xg: Mapped[float | None] = mapped_column(Numeric(4, 2))
+    # Estadísticas del partido para liquidar mercados de conteo (córners,
+    # tiros, tiros a puerta, tarjetas, faltas). Las trae settle_predictions
+    # de /fixtures/statistics solo para partidos con picks de esos mercados.
     home_corners: Mapped[int | None] = mapped_column(SmallInteger)
     away_corners: Mapped[int | None] = mapped_column(SmallInteger)
+    home_shots: Mapped[int | None] = mapped_column(SmallInteger)
+    away_shots: Mapped[int | None] = mapped_column(SmallInteger)
+    home_shots_on_target: Mapped[int | None] = mapped_column(SmallInteger)
+    away_shots_on_target: Mapped[int | None] = mapped_column(SmallInteger)
+    home_yellow: Mapped[int | None] = mapped_column(SmallInteger)
+    away_yellow: Mapped[int | None] = mapped_column(SmallInteger)
+    home_red: Mapped[int | None] = mapped_column(SmallInteger)
+    away_red: Mapped[int | None] = mapped_column(SmallInteger)
+    home_fouls: Mapped[int | None] = mapped_column(SmallInteger)
+    away_fouls: Mapped[int | None] = mapped_column(SmallInteger)
     referee: Mapped[str | None] = mapped_column(String(120))
     venue: Mapped[str | None] = mapped_column(String(120))
     ext_prob_home: Mapped[float | None] = mapped_column(Numeric(6, 4))
@@ -73,6 +86,22 @@ class Match(Base):
     stats: Mapped[list["TeamMatchStats"]] = relationship(back_populates="match")
     odds: Mapped[list["Odds"]] = relationship(back_populates="match")
     predictions: Mapped[list["Prediction"]] = relationship(back_populates="match")
+
+    def stat_totals(self) -> dict[str, int | None]:
+        """Totales del partido por estadística, con None donde falten datos.
+        Tarjetas = amarillas + 2×rojas (convención de las casas y del modelo)."""
+        def total(h, a):
+            return None if h is None or a is None else h + a
+        cards = None
+        if None not in (self.home_yellow, self.away_yellow, self.home_red, self.away_red):
+            cards = self.home_yellow + self.away_yellow + 2 * (self.home_red + self.away_red)
+        return {
+            "corners": total(self.home_corners, self.away_corners),
+            "shots": total(self.home_shots, self.away_shots),
+            "shots_on_target": total(self.home_shots_on_target, self.away_shots_on_target),
+            "cards": cards,
+            "fouls": total(self.home_fouls, self.away_fouls),
+        }
 
 
 class TeamMatchStats(Base):
