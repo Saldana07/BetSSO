@@ -16,8 +16,16 @@ DIRECTAMENTE desde el CSV, sin pasar por la tabla `matches`, porque:
 
 Supuesto y su límite: los córners están algo sobredispersos respecto a una
 Poisson (varianza/media ≈ 1.2 en el total), así que las colas se subestiman
-un poco. Se valida empíricamente en ml/backtesting/validate_corners.py; si
-la calibración lo exige, el paso natural es una Binomial Negativa.
+un poco. Se valida empíricamente en ml/backtesting/validate_corners.py.
+
+Capa de calibración (ml/training/calibrate_corners.py): la Poisson cruda es
+sobreconfiada en los extremos, que es justo donde el sistema apuesta (cuando
+decía 68% de Over 9.5 acertaba 61%; medido en 6,926 partidos fuera de
+muestra). Como el ranking elige el pick con mayor desacuerdo con la casa,
+sin corregir esto se estaba seleccionando el error del modelo, no una
+ventaja. Una isotónica por línea, ajustada sobre predicciones walk-forward,
+lo corrige; se guarda en models/corners_calibration.joblib y CornerModel la
+aplica si existe. Sin el archivo, las probabilidades salen crudas.
 """
 import unicodedata
 from dataclasses import dataclass
@@ -25,6 +33,7 @@ from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson
@@ -32,6 +41,7 @@ from scipy.stats import poisson
 from ml.features.poisson_xg import expected_goals, team_strengths
 
 CSV_PATH = Path(__file__).resolve().parents[2] / "data" / "raw" / "club_football" / "Matches.csv"
+CALIBRATION_PATH = Path(__file__).resolve().parents[2] / "models" / "corners_calibration.joblib"
 ROLLING_WINDOW = 20          # partidos recientes por equipo para estimar su tasa
 MIN_MATCHES = 10             # por debajo de esto no se emite predicción (mismo espíritu que min_team_history_matches)
 # Encogimiento bayesiano de la tasa del equipo hacia el promedio de liga.
@@ -126,37 +136,61 @@ def _cutoff(as_of: date | datetime) -> pd.Timestamp:
 
 
 class CornerModel:
-    def __init__(self, df: pd.DataFrame | None = None):
+    def __init__(self, df: pd.DataFrame | None = None, calibration_path: Path | None = CALIBRATION_PATH):
         self.df = df if df is not None else _load()
+        # Índices por equipo y por división, ordenados por fecha: el corte
+        # temporal se resuelve con searchsorted en vez de filtrar 122k filas
+        # por predicción (la validación pasaba de ~10 min a segundos).
+        self._teams = self._index_teams(self.df)
+        self._divisions = {
+            div: (g["MatchDate"].to_numpy(), g["HomeCorners"].to_numpy(float), g["AwayCorners"].to_numpy(float))
+            for div, g in self.df.groupby("Division", sort=False)
+        }
+        self.calibrators: dict[float, object] = {}
+        if calibration_path is not None and Path(calibration_path).exists():
+            self.calibrators = joblib.load(calibration_path)
+
+    @staticmethod
+    def _index_teams(df: pd.DataFrame) -> dict[str, tuple]:
+        home = pd.DataFrame({"key": df["home_key"], "date": df["MatchDate"], "div": df["Division"],
+                             "for": df["HomeCorners"], "against": df["AwayCorners"]})
+        away = pd.DataFrame({"key": df["away_key"], "date": df["MatchDate"], "div": df["Division"],
+                             "for": df["AwayCorners"], "against": df["HomeCorners"]})
+        long = pd.concat([home, away]).sort_values("date", kind="stable")
+        return {
+            key: (g["date"].to_numpy(), g["for"].to_numpy(float), g["against"].to_numpy(float), g["div"].to_numpy())
+            for key, g in long.groupby("key", sort=False)
+        }
 
     def team_profile(self, team_name: str, as_of: date | datetime) -> TeamCornerProfile | None:
         """Tasas rodantes del equipo usando SOLO partidos anteriores a `as_of`
         (sin fuga temporal). Devuelve None si no hay historial suficiente."""
-        key = _resolve_key(team_name)
-        cutoff = _cutoff(as_of)
-        df = self.df
-        mask = ((df["home_key"] == key) | (df["away_key"] == key)) & (df["MatchDate"] < cutoff)
-        recent = df.loc[mask].tail(ROLLING_WINDOW)
-        if len(recent) < MIN_MATCHES:
+        entry = self._teams.get(_resolve_key(team_name))
+        if entry is None:
             return None
-
-        is_home = recent["home_key"] == key
-        corners_for = np.where(is_home, recent["HomeCorners"], recent["AwayCorners"])
-        corners_against = np.where(is_home, recent["AwayCorners"], recent["HomeCorners"])
+        dates, corners_for, corners_against, divisions = entry
+        end = int(np.searchsorted(dates, np.datetime64(_cutoff(as_of)), side="left"))
+        start = max(0, end - ROLLING_WINDOW)
+        if end - start < MIN_MATCHES:
+            return None
         return TeamCornerProfile(
-            corners_for_avg=float(corners_for.mean()),
-            corners_against_avg=float(corners_against.mean()),
-            n_matches=len(recent),
-            division=str(recent["Division"].iloc[-1]),
+            corners_for_avg=float(corners_for[start:end].mean()),
+            corners_against_avg=float(corners_against[start:end].mean()),
+            n_matches=end - start,
+            division=str(divisions[end - 1]),
         )
 
     def league_averages(self, division: str, as_of: date | datetime, window_matches: int = 400) -> tuple[float, float]:
         """Promedio de córners local/visitante de la liga en sus últimos partidos antes de `as_of`."""
-        cutoff = _cutoff(as_of)
-        recent = self.df[(self.df["Division"] == division) & (self.df["MatchDate"] < cutoff)].tail(window_matches)
-        if recent.empty:
+        entry = self._divisions.get(division)
+        if entry is None:
             return 5.6, 4.6  # promedios globales de la fuente, como prior
-        return float(recent["HomeCorners"].mean()), float(recent["AwayCorners"].mean())
+        dates, home_c, away_c = entry
+        end = int(np.searchsorted(dates, np.datetime64(_cutoff(as_of)), side="left"))
+        if end == 0:
+            return 5.6, 4.6
+        start = max(0, end - window_matches)
+        return float(home_c[start:end].mean()), float(away_c[start:end].mean())
 
     def expected_corners(self, home_team: str, away_team: str, as_of: date | datetime) -> tuple[float, float] | None:
         home = self.team_profile(home_team, as_of)
@@ -178,6 +212,29 @@ class CornerModel:
         )
 
         return expected_goals(home_attack, home_defense, away_attack, away_defense, league_home, league_away)
+
+
+    def market_probabilities(self, home_team: str, away_team: str, as_of: date | datetime) -> dict[str, float] | None:
+        """Probabilidades por línea, calibradas si hay calibrador. None si falta historial."""
+        exp = self.expected_corners(home_team, away_team, as_of)
+        if exp is None:
+            return None
+        return apply_calibration(corner_market_probabilities(*exp), self.calibrators)
+
+
+def apply_calibration(raw: dict[str, float], calibrators: dict[float, object]) -> dict[str, float]:
+    """Pasa P(over) de cada línea por su isotónica (si la hay) y recompone P(under)."""
+    if not calibrators:
+        return raw
+    out = dict(raw)
+    for line, cal in calibrators.items():
+        key = f"CORNERS_OU_{line}_OVER"
+        if key not in out:
+            continue
+        p_over = float(np.clip(cal.predict([out[key]])[0], 0.0, 1.0))
+        out[key] = p_over
+        out[f"CORNERS_OU_{line}_UNDER"] = 1.0 - p_over
+    return out
 
 
 def corner_market_probabilities(lambda_home: float, lambda_away: float) -> dict[str, float]:

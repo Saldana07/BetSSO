@@ -26,7 +26,7 @@ from sqlalchemy import distinct, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Match
-from ml.features.corners import CornerModel, corner_market_probabilities
+from ml.features.corners import CornerModel
 from ml.features.elo import elo_win_draw_loss_probs, update_elo
 from ml.features.form import MatchResult, build_form_features
 from ml.features.poisson_xg import expected_goals, extended_market_probabilities, market_probabilities, team_strengths
@@ -272,12 +272,14 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
     # Córners: solo si AMBOS equipos tienen historial suficiente en la fuente
     # de córners. Si no, simplemente no hay claves CORNERS_* y el job no
     # emite picks de córners para este partido (sin datos no se apuesta).
-    corner_probs: dict[str, float] = {}
+    # Las probabilidades salen ya pasadas por la calibración isotónica
+    # (models/corners_calibration.joblib) si existe; ver ml/training/calibrate_corners.py.
     expected_corners = models.corners.expected_corners(
         match.home_team.name, match.away_team.name, match.kickoff_utc
     )
-    if expected_corners is not None:
-        corner_probs = corner_market_probabilities(*expected_corners)
+    corner_probs = models.corners.market_probabilities(
+        match.home_team.name, match.away_team.name, match.kickoff_utc
+    ) or {}
 
     return {
         **goals_market_probs,

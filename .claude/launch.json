@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "frontend", "run", "dev", "--", "--host"],
       "port": 5173
+    },
+    {
+      "name": "backend-api",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd backend && .venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"],
+      "port": 8000
     }
   ]
 }

@@ -840,6 +840,62 @@ sincronizó 431 partidos, 11 con historial, 5,124 cuotas y **3 picks**
 (córners 9.5 en Albacete–Córdoba y Juve Stabia–Cesena, córners 8.5 en
 Espanyol–Elche), todos con confianza baja — coherente con la evidencia.
 
+## "Creo que tiene poco acierto": revisión de resultados y la sobreconfianza en córners
+
+**Resultado real a 2026-09-18:** 6 picks liquidados, **2 ganados / 4
+perdidos, −2.44 unidades** (yield −41%). Los 4 OVER de córners perdieron; el
+único UNDER ganó. Closing Line Value medio **−0.3%**, positivo en 1 de 6: el
+mercado no nos dio la razón después, que es la señal más informativa con
+tan pocas apuestas.
+
+Seis apuestas no prueban nada por sí solas (con 57% de acierto esperado,
+2 de 6 o peor ocurre un 22% de las veces). Así que se buscó la causa en los
+datos, no en la racha:
+
+**El modelo de córners no tiene sesgo global pero sí es sobreconfiado en los
+extremos**, medido sobre 6,926 partidos de 2025-26 fuera de muestra:
+
+| Predicho (Over 9.5) | Real | n |
+|---|---|---|
+| 0.60–0.65 | 0.573 | 639 |
+| >0.65 | **0.606** | 325 |
+
+Y **los extremos son exactamente donde el sistema apuesta**: el ranking elige
+el pick con mayor desacuerdo con la casa, y el mayor desacuerdo está donde
+el modelo más se equivoca. Se estaba seleccionando el error del modelo, no
+una ventaja (winner's curse). El "EV +13.5%" de Albacete–Córdoba era
+principalmente eso.
+
+Esto también responde "¿por qué siempre córners 9.5?": córners es el único
+mercado que pasó validación (1X2/goles demostraron no ganarle a la cuota de
+cierre), y dentro de córners la línea 9.5 es la que más se aleja de la tasa
+base, o sea, la que más EV *aparente* produce.
+
+**Arreglo:** calibración isotónica por línea
+([calibrate_corners.py](backend/ml/training/calibrate_corners.py)), ajustada
+sobre predicciones walk-forward y evaluada en un holdout posterior antes de
+guardarse. Efecto fuera de muestra (ajuste 2024-25, holdout 2025-26):
+
+| Over 9.5 con p cruda ≥ 0.65 | crudo dice | calibrado dice | real |
+|---|---|---|---|
+| n = 325 | 0.682 | 0.596 | 0.606 |
+
+Brier mejora en ambas líneas. Aplicado a los 5 picks de córners emitidos,
+**los 3 de mayor "EV" no habrían salido** (Albacete, Rayo, Juve Stabia; los
+tres perdieron); los dos restantes (uno ganado, uno perdido) sí. El
+calibrador vive en `models/corners_calibration.joblib` y `CornerModel` lo
+aplica si existe; sin el archivo, las probabilidades salen crudas.
+
+De paso, `CornerModel` pasó de filtrar 122k filas por predicción a un índice
+por equipo con `searchsorted` (~1000× más rápido, salida bit-idéntica),
+lo que hizo viable ajustar y validar sobre 14k partidos.
+
+**Consecuencias honestas.** Con la recalibración, la línea 8.5 ya no supera
+la tasa base en accuracy (61.8% vs 61.9%) y queda bloqueada; solo 9.5
+conserva habilidad (+4.9 puntos, Brier 0.2467 vs 0.2499). Habrá **menos
+picks**, y los que salgan tendrán EV más pequeño y más creíble. Sigue siendo
+paper trading: la única prueba pendiente contra las casas es acumular CLV.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
@@ -853,4 +909,3 @@ Espanyol–Elche), todos con confianza baja — coherente con la evidencia.
   divergir de la BD real.
 - `elo_history` / `teams.elo_rating` nunca se escriben: el Elo se recalcula
   desde cero en cada predicción (O(n²); hoy ~3 s, se degradará con más ligas).
-- Scheduler (APScheduler o Programador de tareas de Windows) para `daily.bat`.

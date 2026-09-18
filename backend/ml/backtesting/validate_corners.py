@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from ml.features.corners import LINES, CornerModel, _load, corner_market_probabilities
+from ml.features.corners import LINES, CornerModel, _load, apply_calibration, corner_market_probabilities
 
 
 def run(since: str, max_matches: int) -> dict:
@@ -34,7 +34,8 @@ def run(since: str, max_matches: int) -> dict:
         exp = model.expected_corners(m["HomeTeam"], m["AwayTeam"], m["MatchDate"])
         if exp is None:
             continue
-        probs = corner_market_probabilities(*exp)
+        # Misma tubería que producción: Poisson cruda + calibración si existe.
+        probs = apply_calibration(corner_market_probabilities(*exp), model.calibrators)
         total = m["HomeCorners"] + m["AwayCorners"]
         row = {"total": total, "lambda": sum(exp)}
         for line in LINES:
@@ -43,7 +44,8 @@ def run(since: str, max_matches: int) -> dict:
         rows.append(row)
 
     res = pd.DataFrame(rows)
-    print(f"Partidos evaluados: {len(res)} (de {len(test)} candidatos; el resto sin historial suficiente)\n")
+    print(f"Partidos evaluados: {len(res)} (de {len(test)} candidatos; el resto sin historial suficiente)")
+    print(f"Calibración isotónica: {'aplicada' if model.calibrators else 'NO (probabilidades crudas)'}\n")
 
     summary = {}
     for line in LINES:
