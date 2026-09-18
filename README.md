@@ -1000,6 +1000,25 @@ Se contrastó punto por punto una revisión de la lógica contra el código.
    faltas 0.008). Activada: mejora el Brier en córners y tarjetas (~0.001),
    neutra en el resto. Correcta, no transformadora. Calibradores reajustados.
 
+**Segunda auditoría (mismos hallazgos + tres nuevos):**
+
+8. **Features muertas.** `home/away_injuries_impact` eran 0 en las 61,736
+   filas (el plan gratuito no da lesiones). Un árbol nunca parte por una
+   constante, así que no "metían ruido" como decía la auditoría, pero eran
+   peso muerto: fuera de `FEATURE_COLUMNS` hasta que haya datos.
+9. **Lección de paso — la semilla.** Al reentrenar dos veces con los mismos
+   datos, el backtest simulado del 1X2 dio +0.1 pts / +0.2% y luego +2.8 pts
+   / +4.9%. Solo cambió el azar interno de XGBoost (`subsample` sin
+   `random_state`). Es la demostración más clara de que 459 apuestas
+   simuladas son ruido. Semilla fijada; las filas simuladas NO se persisten
+   como evidencia: el veredicto del 1X2 sigue siendo el del backtest con
+   cuotas reales (negativo) y el mercado sigue bloqueado.
+10. **Montecarlo desconectado del job.** Cierto, y deliberado por ahora: el
+    intervalo epistémico del Montecarlo solo existe para los mercados de
+    goles, que están bloqueados por el backtest real. Conectarlo hoy no
+    cambiaría ningún pick. Para los mercados de conteo el papel equivalente
+    lo hacen el encogimiento bayesiano y la calibración isotónica.
+
 **Cierto pero no urgente / matizado:**
 
 6. Replay O(N) por predicción: real, sigue en pendientes (hoy ~3 s por

@@ -110,7 +110,9 @@ def main():
     parser.add_argument("--model-dir", default="models")
     parser.add_argument("--model-version", default="v1")
     parser.add_argument("--market", default="1X2", choices=list(MARKET_SPECS.keys()))
-    parser.add_argument("--persist", action="store_true", help="Guarda el resultado en backtest_results")
+    parser.add_argument("--persist", action="store_true",
+                        help="Guarda el resultado en backtest_results. OJO: es un mercado SIMULADO; para 1X2 el veredicto "
+                             "autoritativo es real_odds_backtest.py (cuotas reales), que dio yield negativo.")
     args = parser.parse_args()
 
     print("*** SIMULACIÓN: cuotas derivadas de prob. de 538 + margen sintético, NO cuotas reales de mercado ***")

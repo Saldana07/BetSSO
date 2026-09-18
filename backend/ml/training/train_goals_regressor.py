@@ -41,6 +41,7 @@ def train_goals_model(df: pd.DataFrame, target_col: str, n_splits: int = 5) -> t
             reg_lambda=1.0,
             min_child_samples=30,
             verbose=-1,
+            random_state=42,
         )
         model.fit(X_train, y_train, eval_X=X_val, eval_y=y_val)
         preds = np.clip(model.predict(X_val), 1e-3, None)

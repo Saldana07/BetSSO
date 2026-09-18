@@ -31,8 +31,10 @@ FEATURE_COLUMNS = [
     "away_weighted_points_pct",
     "form_points_pct_diff",
     "form_xg_diff_delta",
-    "home_injuries_impact",
-    "away_injuries_impact",
+    # home/away_injuries_impact quedan fuera: el plan gratuito de la API no da
+    # lesiones y eran 0 en el 100% del dataset. Un árbol nunca parte por una
+    # constante, así que no metían ruido, pero tampoco aportaban nada. Se
+    # reincorporan cuando haya datos reales (features() ya las calcula).
     "home_rest_days",
     "away_rest_days",
     "rest_days_diff",
@@ -80,6 +82,7 @@ def time_series_cv_train(df: pd.DataFrame, n_splits: int = 5) -> tuple[XGBClassi
             num_class=3,
             eval_metric="mlogloss",
             early_stopping_rounds=30,
+            random_state=42,           # reproducible: sin semilla, dos corridas iguales daban +0.1 y +2.8 pts de "habilidad"
         )
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
