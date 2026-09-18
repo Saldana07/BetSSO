@@ -51,7 +51,12 @@ def build_dataset() -> pd.DataFrame:
         matches = db.execute(
             select(Match)
             .where(Match.status == "FINISHED", Match.home_goals.isnot(None), Match.away_goals.isnot(None))
-            .order_by(Match.league_id, Match.kickoff_utc)
+            # Orden cronológico GLOBAL, no por liga: el estado (Elo, forma,
+            # goles) es por equipo y viaja entre competiciones. Ordenar por
+            # liga primero hacía que un equipo llegara a su partido de copa
+            # de 2017 con el Elo de su liga de 2023 (fuga del futuro).
+            # Mismo orden que compute_pre_match_features en predict.py.
+            .order_by(Match.kickoff_utc, Match.id)
         ).scalars().all()
     finally:
         db.close()

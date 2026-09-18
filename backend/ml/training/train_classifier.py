@@ -41,6 +41,9 @@ TARGET_COLUMN = "result"
 DATE_COLUMN = "match_date"
 
 
+HOLDOUT_SPLIT = 0.85  # fracción cronológica de entrenamiento; el resto es holdout (calibración + backtest)
+
+
 def load_dataset(path: str) -> pd.DataFrame:
     df = pd.read_parquet(path)
     df = df.sort_values(DATE_COLUMN).reset_index(drop=True)
@@ -114,12 +117,14 @@ def main():
     args = parser.parse_args()
 
     df = load_dataset(args.features)
-    model, encoder, metrics = time_series_cv_train(df)
 
-    # Reserva el último 15% cronológico como holdout final para calibración + backtest,
-    # completamente fuera del entrenamiento.
-    split_idx = int(len(df) * 0.85)
-    holdout = df.iloc[split_idx:]
+    # Reserva el último 15% cronológico como holdout final para calibración +
+    # backtest ANTES del CV. Si el CV viera todo el dataset, su último fold
+    # usaría ese mismo tramo para el early stopping y la calibración se haría
+    # sobre datos que ya moldearon el modelo: probabilidades optimistas.
+    split_idx = int(len(df) * HOLDOUT_SPLIT)
+    train_df, holdout = df.iloc[:split_idx], df.iloc[split_idx:]
+    model, encoder, metrics = time_series_cv_train(train_df)
     X_holdout = holdout[FEATURE_COLUMNS].values
     y_holdout = encoder.transform(holdout[TARGET_COLUMN].values)
 

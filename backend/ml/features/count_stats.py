@@ -21,13 +21,19 @@ desde 2000 con todas estas estadísticas, actualizado hasta pocos días atrás.
 Se usa directamente desde el CSV porque cubre ligas que no están en la BD y
 sus nombres de equipo son un tercer namespace (resuelto con alias).
 
-Supuesto y su límite: todas estas cuentas están sobredispersas respecto a
-una Poisson (varianza/media: córners 1.2, tarjetas 1.2, tiros 1.6, faltas
-2.1), y un promedio de 20 partidos es ruidoso. Dos correcciones empíricas:
-encogimiento bayesiano de la tasa del equipo (prior = 20 partidos de liga) y
-una calibración isotónica por línea ajustada sobre predicciones walk-forward
-(ml/training/calibrate_count_stats.py). Sin la calibración el modelo era
-sobreconfiado justo en los extremos, que es donde el ranking apuesta.
+Distribución del total: Binomial Negativa (Gamma-Poisson) con Var = μ + α·μ²,
+no Poisson pura. Las cuentas están sobredispersas marginalmente (var/media:
+córners 1.2, tarjetas 1.4, tiros 1.6, faltas 1.5), pero CONDICIONADA a la λ
+del partido la sobredispersión es pequeña: α estimado por momentos sobre
+predicciones walk-forward 2024-25 (residuo cuadrático menos μ, sobre μ²).
+En holdout 2025-26 la NB mejora el Brier en córners y tarjetas (~0.001) y es
+neutra en el resto; se usa porque es lo correcto, no porque cambie mucho.
+
+Además: encogimiento bayesiano de la tasa del equipo (prior = 20 partidos de
+liga) y calibración isotónica por línea ajustada sobre predicciones
+walk-forward (ml/training/calibrate_count_stats.py). Sin la calibración el
+modelo era sobreconfiado justo en los extremos, que es donde el ranking
+apuesta.
 """
 import unicodedata
 from dataclasses import dataclass
@@ -38,7 +44,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from scipy.stats import poisson
+from scipy.stats import nbinom, poisson
 
 from ml.features.poisson_xg import expected_goals, team_strengths
 
@@ -67,6 +73,8 @@ class StatSpec:
     fallback_league_avg: tuple[float, float]
     # Columnas extra que se suman a la principal (tarjetas: amarillas + 2×rojas).
     extra_cols: tuple[tuple[str, str, float], ...] = ()
+    # Sobredispersión de la Binomial Negativa (Var = μ + α·μ²); 0 = Poisson.
+    dispersion: float = 0.0
 
     @property
     def calibration_path(self) -> Path:
@@ -80,17 +88,20 @@ class StatSpec:
 # devoluciones) y solo las que las casas publican de verdad para partidos
 # normales. Las que no pasen validación no reciben backtest_results y el job
 # no las apuesta (SIN_VALIDAR).
-CORNERS = StatSpec("corners", "CORNERS_OU", "HomeCorners", "AwayCorners", (8.5, 9.5), "Córners", (5.6, 4.6))
+# `dispersion` (α) estimada por momentos en 2024-25; ver docstring.
+CORNERS = StatSpec("corners", "CORNERS_OU", "HomeCorners", "AwayCorners", (8.5, 9.5), "Córners", (5.6, 4.6),
+                   dispersion=0.015)
 SHOTS = StatSpec("shots", "SHOTS_OU", "HomeShots", "AwayShots",
-                 (20.5, 21.5, 22.5, 23.5, 24.5, 25.5, 26.5, 27.5, 28.5), "Tiros totales", (13.0, 10.5))
+                 (20.5, 21.5, 22.5, 23.5, 24.5, 25.5, 26.5, 27.5, 28.5), "Tiros totales", (13.0, 10.5),
+                 dispersion=0.013)
 SHOTS_ON_TARGET = StatSpec("sot", "SOT_OU", "HomeTarget", "AwayTarget",
-                           (6.5, 7.5, 8.5, 9.5, 10.5), "Tiros a puerta", (5.1, 4.1))
+                           (6.5, 7.5, 8.5, 9.5, 10.5), "Tiros a puerta", (5.1, 4.1), dispersion=0.012)
 # Tarjetas según la convención habitual de las casas (Bet365, Pinnacle):
 # amarilla = 1, roja = 2. Una segunda amarilla que expulsa cuenta 1 + 2.
 CARDS = StatSpec("cards", "CARDS_OU", "HomeYellow", "AwayYellow", (2.5, 3.5, 4.5, 5.5, 6.5), "Tarjetas", (1.8, 2.1),
-                 extra_cols=(("HomeRed", "AwayRed", 2.0),))
+                 extra_cols=(("HomeRed", "AwayRed", 2.0),), dispersion=0.070)
 FOULS = StatSpec("fouls", "FOULS_OU", "HomeFouls", "AwayFouls",
-                 (21.5, 22.5, 23.5, 24.5, 25.5, 26.5, 27.5, 28.5, 29.5), "Faltas", (12.5, 13.0))
+                 (21.5, 22.5, 23.5, 24.5, 25.5, 26.5, 27.5, 28.5, 29.5), "Faltas", (12.5, 13.0), dispersion=0.008)
 
 ALL_SPECS: tuple[StatSpec, ...] = (CORNERS, SHOTS, SHOTS_ON_TARGET, CARDS, FOULS)
 SPECS_BY_KEY = {s.key: s for s in ALL_SPECS}
@@ -292,9 +303,19 @@ class CountStatModel:
         return apply_calibration(self.raw_probabilities(*exp), self.calibrators, self.spec)
 
 
+def total_cdf(total_lambda: float, dispersion: float) -> np.ndarray:
+    """CDF del total en 0..MAX_COUNT: Binomial Negativa con Var = μ + α·μ²
+    (parametrización n = 1/α, p = n / (n + μ)); Poisson si α = 0."""
+    k = np.arange(MAX_COUNT + 1)
+    if dispersion <= 0:
+        return poisson.cdf(k, total_lambda)
+    n = 1.0 / dispersion
+    return nbinom.cdf(k, n, n / (n + total_lambda))
+
+
 def over_under_probabilities(total_lambda: float, spec: StatSpec) -> dict[str, float]:
-    """P(total > línea) para cada línea del spec, bajo total ~ Poisson(λ)."""
-    cdf = poisson.cdf(np.arange(MAX_COUNT + 1), total_lambda)
+    """P(total > línea) para cada línea del spec, bajo total ~ NB(μ, α) (Poisson si α = 0)."""
+    cdf = total_cdf(total_lambda, spec.dispersion)
     out = {}
     for line in spec.lines:
         p_over = float(1.0 - cdf[int(np.floor(line))])  # P(X > 9.5) = 1 - P(X <= 9)

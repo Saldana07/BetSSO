@@ -1,16 +1,35 @@
-"""Modelo de goles esperados basado en distribución de Poisson (Dixon-Coles simplificado).
+"""Modelo de goles esperados basado en distribución de Poisson con la
+corrección de dependencia de Dixon-Coles (1997).
 
 Idea central: los goles marcados por cada equipo se modelan como variables
-Poisson independientes cuya media (lambda) depende de:
+Poisson cuya media (lambda) depende de:
   - fuerza de ataque del equipo (attack_strength)
   - fuerza de defensa del rival (defense_strength)
   - factor local/visitante
   - xG rodante reciente (blend con goles reales para reducir varianza)
+
+Los goles NO son independientes en marcadores bajos: la Poisson
+independiente subestima el 0-0 y el 1-1 y sobreestima el 1-0 / 0-1. Dixon y
+Coles lo corrigen con un factor tau(x, y) que solo toca esas cuatro celdas:
+    tau(0,0) = 1 - lh*la*rho    tau(0,1) = 1 + lh*rho
+    tau(1,0) = 1 + la*rho       tau(1,1) = 1 - rho
+con rho < 0 (valor de libro ≈ -0.13 para lambdas de un Poisson clásico).
+
+Resultado empírico (ml/training/fit_dixon_coles_rho.py, 52k partidos de
+entrenamiento, 9k de holdout, lambdas del regresor LightGBM): rho óptimo
+-0.04 en entrenamiento y rho = 0 el mejor en holdout; -0.13 EMPEORA la
+verosimilitud. El regresor ya captura la dependencia de los marcadores
+bajos (0-0: 7.06% modelo vs 7.34% real). Por eso DIXON_COLES_RHO = 0: la
+corrección queda implementada y verificable, pero apagada. Si cambia el
+modelo de lambdas, volver a ajustarla antes de encenderla.
 """
 import numpy as np
 from scipy.stats import poisson
 
 MAX_GOALS = 8  # suficiente para cubrir >99.5% de la masa de probabilidad
+# Correlación de Dixon-Coles. 0 = Poisson independiente (ver docstring: es lo
+# que mejor verosimilitud da en holdout con las lambdas actuales).
+DIXON_COLES_RHO = 0.0
 
 
 def team_strengths(
@@ -47,11 +66,27 @@ def expected_goals(
     return max(lambda_home, 0.05), max(lambda_away, 0.05)
 
 
-def scoreline_matrix(lambda_home: float, lambda_away: float, max_goals: int = MAX_GOALS) -> np.ndarray:
-    """Matriz P(home=i, away=j) asumiendo independencia Poisson."""
+def dixon_coles_tau(lambda_home: float, lambda_away: float, rho: float, max_goals: int = MAX_GOALS) -> np.ndarray:
+    """Factor de corrección por celda; 1 fuera de {0,1}x{0,1}."""
+    tau = np.ones((max_goals + 1, max_goals + 1))
+    tau[0, 0] = 1 - lambda_home * lambda_away * rho
+    tau[0, 1] = 1 + lambda_home * rho
+    tau[1, 0] = 1 + lambda_away * rho
+    tau[1, 1] = 1 - rho
+    return np.clip(tau, 1e-6, None)  # nunca probabilidades negativas si rho es extremo
+
+
+def scoreline_matrix(
+    lambda_home: float, lambda_away: float, max_goals: int = MAX_GOALS, rho: float = DIXON_COLES_RHO
+) -> np.ndarray:
+    """Matriz P(home=i, away=j): Poisson por equipo con la corrección de
+    Dixon-Coles en los marcadores bajos, renormalizada para que sume 1."""
     home_probs = poisson.pmf(np.arange(max_goals + 1), lambda_home)
     away_probs = poisson.pmf(np.arange(max_goals + 1), lambda_away)
-    return np.outer(home_probs, away_probs)
+    matrix = np.outer(home_probs, away_probs)
+    if rho:
+        matrix = matrix * dixon_coles_tau(lambda_home, lambda_away, rho, max_goals)
+    return matrix / matrix.sum()
 
 
 def market_probabilities(lambda_home: float, lambda_away: float) -> dict[str, float]:

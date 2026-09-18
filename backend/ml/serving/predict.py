@@ -298,6 +298,13 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
         "DOUBLE_CHANCE_1X": float(p_home + p_draw),
         "DOUBLE_CHANCE_X2": float(p_draw + p_away),
         "DOUBLE_CHANCE_12": float(p_home + p_away),
+        # Hándicap ±0.5 es EXACTAMENTE el mismo evento que 1X2 / doble
+        # oportunidad; debe salir del mismo modelo o el sistema daría dos EV
+        # distintos para la misma apuesta física.
+        "AH_-0.5_HOME": float(p_home),               # local gana
+        "AH_-0.5_AWAY": float(p_draw + p_away),      # visitante o empate
+        "AH_+0.5_HOME": float(p_home + p_draw),      # local o empate
+        "AH_+0.5_AWAY": float(p_away),               # visitante gana
         "_diagnostics": {
             "n_historical_matches": features["_n_historical_matches"],
             "home_history": features["_home_history"],

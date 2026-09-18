@@ -14,7 +14,7 @@ from lightgbm import LGBMRegressor
 from sklearn.metrics import mean_poisson_deviance
 from sklearn.model_selection import TimeSeriesSplit
 
-from ml.training.train_classifier import FEATURE_COLUMNS, DATE_COLUMN, load_dataset
+from ml.training.train_classifier import DATE_COLUMN, FEATURE_COLUMNS, HOLDOUT_SPLIT, load_dataset
 
 
 def train_goals_model(df: pd.DataFrame, target_col: str, n_splits: int = 5) -> tuple[LGBMRegressor, list[float]]:
@@ -57,6 +57,9 @@ def main():
     args = parser.parse_args()
 
     df = load_dataset(args.features)
+    # Mismo holdout que el clasificador, fuera del CV: el backtest se evalúa
+    # sobre ese tramo y el early stopping del último fold no debe haberlo visto.
+    df = df.iloc[: int(len(df) * HOLDOUT_SPLIT)]
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 

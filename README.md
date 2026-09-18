@@ -962,6 +962,53 @@ job `generate_daily_pick` acepta `--date`.
 Consumo de API: ~11 (hoy) + ~36 (mañana) peticiones de cuotas + partidos y
 liquidación; cabe en las 100 diarias del plan gratuito, con margen.
 
+## Revisión externa: qué era cierto, qué no, y qué cambió
+
+Se contrastó punto por punto una revisión de la lógica contra el código.
+
+**Bugs reales, corregidos:**
+
+1. **Fuga en la calibración.** `train_classifier` hacía el CV temporal
+   sobre el 100% del dataset y luego calibraba (isotónica) sobre el último
+   15%; el último fold del `TimeSeriesSplit` ya había usado ese tramo para
+   el early stopping. Mismo patrón en el regresor de goles. Ahora el holdout
+   se separa ANTES del CV (`HOLDOUT_SPLIT`), y el backtest usa el mismo
+   corte. Efecto medido: la "habilidad" del 1X2 en el backtest simulado pasó
+   de +1.8 pts / yield +3.0% a **+0.1 pts / +0.2%** — parte de lo poco que
+   veíamos era la fuga.
+2. **Orden por liga en el replay.** `build_dataset` ordenaba por
+   `(league_id, kickoff)`; como el estado Elo/forma es por equipo y viaja
+   entre competiciones, un equipo llegaba a su partido de copa de 2017 con
+   el Elo de su liga de 2023. Ahora orden cronológico global, igual que en
+   predicción. Dataset y modelos regenerados.
+3. **Hándicap ±0.5 ≠ 1X2.** Son el mismo evento físico pero salían de dos
+   modelos (Poisson vs XGBoost) con EVs distintos. Ahora `AH_±0.5` se deriva
+   del clasificador, como el 1X2 y la doble oportunidad.
+
+**Cierto en teoría, verificado con datos antes de tocar:**
+
+4. **Dixon-Coles.** Implementado (`scoreline_matrix(..., rho)`) y ajustado
+   por máxima verosimilitud ([fit_dixon_coles_rho.py](backend/ml/training/fit_dixon_coles_rho.py),
+   52k partidos / 9k holdout). Resultado: rho óptimo −0.04 en
+   entrenamiento y **rho = 0 el mejor en holdout**; el −0.13 de los libros
+   *empeora* la verosimilitud, porque el regresor LightGBM ya captura la
+   dependencia de los marcadores bajos (0-0: 7.06% modelo vs 7.34% real).
+   Queda implementado y apagado. Aplicar el valor de libro sin medir habría
+   sido un retroceso.
+5. **Binomial Negativa en conteos.** La sobredispersión *condicional* a la λ
+   del partido es pequeña (α: córners 0.015, tiros 0.013, tarjetas 0.070,
+   faltas 0.008). Activada: mejora el Brier en córners y tarjetas (~0.001),
+   neutra en el resto. Correcta, no transformadora. Calibradores reajustados.
+
+**Cierto pero no urgente / matizado:**
+
+6. Replay O(N) por predicción: real, sigue en pendientes (hoy ~3 s por
+   partido).
+7. "No se desmargenan las cuotas": el EV usa la cuota real (es lo que se
+   cobra) y el CLV compara la misma casa contra sí misma, así que ninguno
+   está sesgado. Solo la columna informativa "prob. modelo vs cuota" muestra
+   la implícita con margen. El Montecarlo ya desmargena.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

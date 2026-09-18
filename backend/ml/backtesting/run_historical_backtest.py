@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 from ml.backtesting.backtest import BacktestConfig, passes_production_gate, run_backtest
-from ml.training.train_classifier import DATE_COLUMN, FEATURE_COLUMNS, TARGET_COLUMN
+from ml.training.train_classifier import HOLDOUT_SPLIT, DATE_COLUMN, FEATURE_COLUMNS, TARGET_COLUMN
 
 OVERROUND = 1.06  # margen típico de casa de apuestas (~6%), aplicado sobre las prob. de 538
 
@@ -77,7 +77,7 @@ def build_backtest_frame(features_path: str, model_dir: str, model_version: str,
     # Igual que en el entrenamiento: el último 15% cronológico es holdout,
     # así que el backtest corre exclusivamente sobre datos que el modelo
     # jamás vio durante el entrenamiento ni la calibración.
-    split_idx = int(len(df) * 0.85)
+    split_idx = int(len(df) * HOLDOUT_SPLIT)  # mismo corte que el entrenamiento
     holdout = df.iloc[split_idx:].reset_index(drop=True)
 
     model = joblib.load(f"{model_dir}/classifier_{model_version}.joblib")

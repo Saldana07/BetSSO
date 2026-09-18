@@ -127,3 +127,22 @@ def test_tarjetas_combinan_amarillas_y_rojas():
         cs._load_raw = original
     assert df.loc[0, "home_value"] == 5.0 and df.loc[0, "away_value"] == 1.0
     assert spec.calibration_path.name == "t_calibration.joblib"
+
+
+def test_binomial_negativa_tiene_colas_mas_gordas_que_poisson():
+    from ml.features.count_stats import total_cdf
+
+    poisson_cdf = total_cdf(4.0, 0.0)
+    nb_cdf = total_cdf(4.0, 0.07)
+    # Misma media; con sobredispersión hay más masa en los extremos.
+    assert 1 - nb_cdf[6] > 1 - poisson_cdf[6]      # P(> 6.5)
+    assert nb_cdf[1] > poisson_cdf[1]              # P(<= 1)
+    assert nb_cdf[-1] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_dispersion_cero_es_poisson():
+    from scipy.stats import poisson
+
+    from ml.features.count_stats import total_cdf
+
+    assert total_cdf(9.5, 0.0) == pytest.approx(poisson.cdf(range(81), 9.5))
