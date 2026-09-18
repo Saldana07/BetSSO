@@ -804,6 +804,42 @@ y el fallo fue el hándicap de Vejle–Brondby. Con n=4 es anécdota, no
 evidencia; el mismo día, con la versión defectuosa del ranking, la cifra
 era 5/6 y habría sido igual de irrelevante.
 
+## "Le doy run pero no muestra apuestas": la automatización que no automatizaba
+
+El 18/09 la app no mostraba nada. Causas, encadenadas:
+
+1. **La tarea programada nunca corrió.** `LastRunTime: 1999`, código
+   267011 ("aún no ha corrido"). La ocurrencia de las 08:00 se saltó (PC
+   apagado o dormido) y `StartWhenAvailable` no la recuperó.
+2. **Cuando por fin corrió, falló con código 1 y sin log.** El clásico de
+   `cmd /c "ruta" args >> "log"`: cmd recorta la primera y la última comilla
+   del comando y rompe la ruta. Como las rutas del proyecto no tienen
+   espacios, la acción va **sin comillas**. Registro reproducible en
+   [register_task.ps1](register_task.ps1).
+3. **`start.bat` no generaba picks.** Solo levantaba servicios y decía
+   "ejecuta daily.bat". Para el usuario, "darle run" es el acceso directo del
+   escritorio; si eso no produce picks, la app "no funciona".
+
+**Arreglos:**
+- **Disparador al iniciar sesión** (2 min de espera para Docker) además de
+  las 08:00. Si el PC estaba apagado, corre al encenderlo.
+- **`daily.bat` es idempotente por día**: escribe `backend/.daily_done` con
+  la fecha al terminar bien y se salta si ya corrió hoy (`daily.bat auto
+  force` lo repite). Así `start.bat` y el disparador de sesión pueden
+  llamarlo sin gastar cuota de API de más.
+- **`start.bat` ejecuta `daily.bat auto` al final**: darle run = servicios
+  arriba + picks del día.
+- `start.bat` tenía el mismo bug de batch que rompió `daily.bat` (etiqueta
+  dentro de un bloque `( )`); solo "funcionaba" porque Docker ya estaba
+  arriba. Corregido. Y el backend ya no arranca con `--reload` (sus workers
+  huérfanos sobrevivían al cerrar la ventana).
+
+**Verificado:** la tarea ejecuta con código 0 y escribe el log; una segunda
+ejecución el mismo día se salta ("Ya se ejecutó hoy"). El flujo del 18/09
+sincronizó 431 partidos, 11 con historial, 5,124 cuotas y **3 picks**
+(córners 9.5 en Albacete–Córdoba y Juve Stabia–Cesena, córners 8.5 en
+Espanyol–Elche), todos con confianza baja — coherente con la evidencia.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

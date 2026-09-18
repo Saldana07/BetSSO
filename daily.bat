@@ -12,6 +12,18 @@ echo   Flujo diario - %HOY%  [%date% %time%]
 echo ============================================
 echo.
 
+REM --- Idempotencia diaria: si ya corrio con exito hoy, no repetir (gasta cuota de API).
+REM     start.bat y el disparador "al iniciar sesion" lo llaman sin miedo; "force" lo salta.
+set MARKER=.daily_done
+if /i "%2"=="force" goto run
+if not exist "%MARKER%" goto run
+set /p DONE=<"%MARKER%"
+if not "%DONE%"=="%HOY%" goto run
+echo Ya se ejecuto hoy con exito. Usa "daily.bat auto force" para repetir.
+if /i not "%AUTO%"=="auto" pause
+exit /b 0
+:run
+
 REM --- Docker: arrancarlo si no esta (tras un reinicio no suele estarlo) ---
 REM Sin bloques ( ) anidados: en batch las variables dentro de un bloque se
 REM expanden al leer el bloque, antes de asignarse, y el contador quedaria vacio.
@@ -48,6 +60,7 @@ echo [5/6] Trayendo cuotas (solo partidos con historial suficiente)...
 echo [6/6] Generando picks del dia...
 %PY% -m jobs.generate_daily_pick || goto :fail
 
+echo %HOY%> "%MARKER%"
 echo.
 echo ============================================
 echo   Listo. Abre http://localhost:5173
