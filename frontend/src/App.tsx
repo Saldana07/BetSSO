@@ -55,6 +55,14 @@ function App() {
       .catch(() => setMatches([]))
   }, [refreshKey, minConfidence, day])
 
+  // Refresco automático: la liquidación corre cada 2 h en segundo plano y los
+  // picks de mañana se regeneran por la mañana; sin esto había que pulsar
+  // "Actualizar" para enterarse.
+  useEffect(() => {
+    const id = window.setInterval(() => setRefreshKey((k) => k + 1), 5 * 60 * 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
   // Enlace directo a un partido: ?match=ID abre su análisis (compartible).
   useEffect(() => {
     const id = Number(new URLSearchParams(window.location.search).get('match'))

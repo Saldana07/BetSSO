@@ -1028,6 +1028,35 @@ Se contrastó punto por punto una revisión de la lógica contra el código.
    está sesgado. Solo la columna informativa "prob. modelo vs cuota" muestra
    la implícita con margen. El Montecarlo ya desmargena.
 
+## Dos tareas, no una: el flujo diario y la liquidación cada 2 horas
+
+Lo que pasó el 19/09 mostró la fragilidad de depender de una sola corrida:
+el flujo de las 07:07 corría *dentro* de la ventana de `start.bat` y murió
+al cerrarla; por la tarde `start.bat` y el disparador "al iniciar sesión"
+lanzaron **dos flujos en paralelo** que chocaron con el límite de 10
+peticiones/minuto (65 s de espera por choque) y gastaron el doble de cuota.
+Mientras tanto la app decía "pendiente de liquidar" para partidos ya
+terminados, porque la liquidación solo ocurría a la mañana siguiente.
+
+Ahora:
+
+- **`daily.bat`** (tarea "flujo diario", 08:00 y 2 min tras iniciar sesión):
+  partidos, cuotas y picks de hoy y mañana. Con **candado** (`.daily_lock`,
+  `mkdir` atómico): un segundo flujo se retira sin hacer nada. `start.bat`
+  lo lanza en su **propia ventana**, así que cerrar el lanzador no lo mata.
+- **`settle.bat`** (tarea "liquidar", **cada 2 horas**): resultados y
+  estadísticas de los partidos con picks pendientes, y liquidación. Cuesta
+  ~3 peticiones por pick una sola vez, así que cabe en la cuota aunque corra
+  12 veces al día. Comparte el candado. Log en `backend/settle.log`.
+- El frontend se refresca solo cada 5 minutos.
+
+Registro de ambas: `powershell -ExecutionPolicy Bypass -File register_task.ps1`.
+
+Límite conocido: si un partido ya terminó y la casa retiró el mercado
+(pasa con tarjetas/tiros en algunas casas), la cuota de cierre de ese pick
+no se puede capturar y queda vacía; el CLV se calcula solo sobre los picks
+que sí la tienen.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

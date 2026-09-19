@@ -52,9 +52,9 @@ echo   - API:       http://127.0.0.1:8000/docs
 echo   - Frontend:  http://localhost:5173
 echo ============================================
 echo.
-echo [5/5] Liquidando picks pendientes y generando los de hoy...
-echo       (si ya se hizo hoy, se salta; usa daily.bat auto force para repetir)
-call "%~dp0daily.bat" auto
+echo [5/5] Liquidando picks pendientes y generando los de hoy y manana...
+echo       (en su propia ventana: cerrar esta no lo interrumpe; si ya se hizo hoy, se salta)
+start "Apuesta Segura - Flujo diario" cmd /c ""%~dp0daily.bat" auto & timeout /t 15"
 echo.
 
 start "" "http://localhost:5173"
