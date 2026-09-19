@@ -18,3 +18,4 @@ dist/
 .DS_Store
 backend/daily.log
 .daily_done
+.daily_lock/

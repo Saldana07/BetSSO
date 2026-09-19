@@ -16,13 +16,24 @@ echo.
 REM --- Idempotencia diaria: si ya corrio con exito hoy, no repetir (gasta cuota de API).
 REM     start.bat y el disparador "al iniciar sesion" lo llaman sin miedo; "force" lo salta.
 set MARKER=.daily_done
-if /i "%2"=="force" goto run
-if not exist "%MARKER%" goto run
+if /i "%2"=="force" goto lock
+if not exist "%MARKER%" goto lock
 set /p DONE=<"%MARKER%"
-if not "%DONE%"=="%HOY%" goto run
+if not "%DONE%"=="%HOY%" goto lock
 echo Ya se ejecuto hoy con exito. Usa "daily.bat auto force" para repetir.
 if /i not "%AUTO%"=="auto" pause
 exit /b 0
+
+REM --- Candado: start.bat y el disparador "al iniciar sesion" pueden coincidir
+REM     (paso el 19/09: dos flujos en paralelo chocando con el limite de la API
+REM     y gastando el doble de cuota). mkdir es atomico: si falla, ya hay otro
+REM     corriendo. Un candado de mas de 2 horas se considera huerfano.
+:lock
+set LOCK=.daily_lock
+if exist "%LOCK%" (
+    powershell -NoProfile -Command "if ((Get-Item '%LOCK%').LastWriteTime -lt (Get-Date).AddHours(-2)) { Remove-Item '%LOCK%' -Recurse -Force }" >nul 2>&1
+)
+mkdir "%LOCK%" 2>nul || goto :busy
 :run
 
 REM --- Docker: arrancarlo si no esta (tras un reinicio no suele estarlo) ---
@@ -72,6 +83,7 @@ echo [8/8] Generando picks de manana (adelanto)...
 %PY% -m jobs.generate_daily_pick --date %MANANA% || goto :fail
 
 echo %HOY%> "%MARKER%"
+rmdir "%LOCK%" 2>nul
 echo.
 echo ============================================
 echo   Listo. Abre http://localhost:5173
@@ -79,7 +91,13 @@ echo ============================================
 if /i not "%AUTO%"=="auto" pause
 exit /b 0
 
+:busy
+echo Ya hay un flujo diario corriendo (candado %LOCK%). No se lanza otro.
+if /i not "%AUTO%"=="auto" pause
+exit /b 0
+
 :fail
+rmdir "%LOCK%" 2>nul
 echo.
 echo *** Un paso fallo. Revisa el mensaje de arriba. ***
 if /i not "%AUTO%"=="auto" pause
