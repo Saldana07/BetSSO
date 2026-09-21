@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -33,16 +34,25 @@ ConfidenceLevel = Literal["ALTA", "MEDIA", "BAJA"]
 _CONFIDENCE_RANK = {"BAJA": 0, "MEDIA": 1, "ALTA": 2}
 
 
-def _day_bounds(day: date | None = None):
-    """[inicio, fin) en UTC del día pedido (hoy por defecto). La API y la BD
-    trabajan en UTC; el frontend manda la fecha que el usuario eligió
-    (ayer / hoy / mañana) ya en UTC."""
+def _day_bounds(day: date | None = None, tz: str | None = None):
+    """[inicio, fin) del día pedido, en la zona horaria del usuario.
+
+    La BD guarda kickoffs en UTC, pero "hoy" para alguien en Colombia a las
+    9 de la noche del domingo NO es el lunes UTC que ya empezó: sin esto la
+    app mostraba vacío el "Hoy" y mandaba los picks del domingo a "Ayer".
+    El frontend manda su zona IANA (America/Bogota); sin `tz`, UTC."""
+    try:
+        zone = ZoneInfo(tz) if tz else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = timezone.utc
     if day is None:
-        day = datetime.now(timezone.utc).date()
-    start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        day = datetime.now(zone).date()
+    start = datetime(day.year, day.month, day.day, tzinfo=zone).astimezone(timezone.utc)
     return start, start + timedelta(days=1)
 
-_DAY_QUERY = Query(default=None, description="Día (UTC) a consultar, YYYY-MM-DD. Por defecto hoy.")
+
+_DAY_QUERY = Query(default=None, description="Día a consultar (YYYY-MM-DD) en la zona `tz`. Por defecto hoy.")
+_TZ_QUERY = Query(default=None, description="Zona horaria IANA del usuario, ej. America/Bogota. Por defecto UTC.")
 
 
 def _actual_stat(market: str, match: Match) -> int | None:
@@ -108,6 +118,7 @@ def get_top_picks(
         default=None, description="Filtra dejando solo picks con esta confianza o mayor (BAJA < MEDIA < ALTA)."
     ),
     day: date | None = _DAY_QUERY,
+    tz: str | None = _TZ_QUERY,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
@@ -120,7 +131,7 @@ def get_top_picks(
     solo lee ese resultado precomputado (lectura rápida, sin recalcular el
     modelo en el request).
     """
-    today_start, today_end = _day_bounds(day)
+    today_start, today_end = _day_bounds(day, tz)
 
     stmt = (
         select(Prediction)
@@ -221,12 +232,12 @@ def get_simulation(
 
 
 @router.get("/matches/today", response_model=list[MatchSummary])
-def get_todays_matches(day: date | None = _DAY_QUERY, db: Session = Depends(get_db)):
+def get_todays_matches(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, db: Session = Depends(get_db)):
     """Partidos del día (hoy por defecto) que tienen cuotas sincronizadas —
     es decir, los que pasaron el filtro de historial suficiente (sync_odds
     solo pide cuotas de esos). Son los partidos que se pueden analizar
     mercado a mercado, haya o no picks estrictos."""
-    start, end = _day_bounds(day)
+    start, end = _day_bounds(day, tz)
     rows = db.execute(
         select(
             Match,
@@ -398,13 +409,14 @@ def get_daily_candidates(
         default=None, description="Filtra dejando solo candidatos con esta confianza o mayor (BAJA < MEDIA < ALTA)."
     ),
     day: date | None = _DAY_QUERY,
+    tz: str | None = _TZ_QUERY,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
     """Lista TODOS los candidatos del día que pasaron el filtro de cuota/EV
     (incluye los del top-picks), ordenados por EV descendente — útil para
     el frontend mostrar el resto de opciones evaluadas."""
-    today_start, today_end = _day_bounds(day)
+    today_start, today_end = _day_bounds(day, tz)
 
     stmt = (
         select(Prediction)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ApiError, getDailyCandidates, getMatchMarkets, getPerformance, getTodaysMatches, getTopPicks, utcDay } from './api'
+import { ApiError, getDailyCandidates, getMatchMarkets, getPerformance, getTodaysMatches, getTopPicks, localDay } from './api'
 import { CandidateRow } from './components/CandidateRow'
 import { ConfidenceFilter } from './components/ConfidenceFilter'
 import { DaySelector, dayLabel, type DayOffset } from './components/DaySelector'
@@ -26,7 +26,7 @@ function App() {
   const [selected, setSelected] = useState<Selected | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const day = utcDay(dayOffset)
+  const day = localDay(dayOffset)
   const when = dayLabel(dayOffset)
 
   useEffect(() => {

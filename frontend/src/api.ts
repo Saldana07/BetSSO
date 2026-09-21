@@ -28,11 +28,17 @@ async function getJson<T>(path: string): Promise<T> {
 
 export { ApiError }
 
-/** Día en UTC (la API y la BD trabajan en UTC): hoy + offset días, como YYYY-MM-DD. */
-export function utcDay(offsetDays: number): string {
+/** Zona horaria del navegador (IANA, ej. America/Bogota). La API la usa para
+ *  que "hoy" sea el hoy del usuario y no el de UTC: a las 9 pm en Colombia ya
+ *  es "mañana" en UTC y la app mostraba vacío. */
+export const LOCAL_TZ: string = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+
+/** Fecha LOCAL de hoy + offset días, como YYYY-MM-DD. */
+export function localDay(offsetDays: number): string {
   const d = new Date()
-  d.setUTCDate(d.getUTCDate() + offsetDays)
-  return d.toISOString().slice(0, 10)
+  d.setDate(d.getDate() + offsetDays)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 function withParams(path: string, params: Record<string, string | undefined>): string {
@@ -43,11 +49,11 @@ function withParams(path: string, params: Record<string, string | undefined>): s
 }
 
 export function getTopPicks(minConfidence?: ConfidenceLevel, day?: string): Promise<PickOfTheDay[]> {
-  return getJson<PickOfTheDay[]>(withParams('/api/predictions/top-picks', { min_confidence: minConfidence, day }))
+  return getJson<PickOfTheDay[]>(withParams('/api/predictions/top-picks', { min_confidence: minConfidence, day, tz: LOCAL_TZ }))
 }
 
 export function getDailyCandidates(minConfidence?: ConfidenceLevel, day?: string): Promise<DailyCandidate[]> {
-  return getJson<DailyCandidate[]>(withParams('/api/predictions/daily-candidates', { min_confidence: minConfidence, day }))
+  return getJson<DailyCandidate[]>(withParams('/api/predictions/daily-candidates', { min_confidence: minConfidence, day, tz: LOCAL_TZ }))
 }
 
 export function getPerformance(): Promise<Performance> {
@@ -59,7 +65,7 @@ export function getSimulation(matchId: number): Promise<Simulation> {
 }
 
 export function getTodaysMatches(day?: string): Promise<MatchSummary[]> {
-  return getJson<MatchSummary[]>(withParams('/api/predictions/matches/today', { day }))
+  return getJson<MatchSummary[]>(withParams('/api/predictions/matches/today', { day, tz: LOCAL_TZ }))
 }
 
 export function getMatchMarkets(matchId: number): Promise<MatchMarkets> {
