@@ -9,8 +9,9 @@
 #    estadisticas de los partidos con picks pendientes y los liquida, para
 #    que "Hoy" y "Ayer" muestren acerto/fallo sin esperar al dia siguiente.
 #
-# - Sin comillas en el comando: cmd /c recorta la primera y la ultima comilla y
-#   rompe la ruta. Las rutas de este proyecto no tienen espacios.
+# - Ambas corren OCULTAS a traves de run_hidden.vbs (wscript): sin el, el
+#   Programador abre una consola visible en cada corrida.
+# - Sin comillas en los argumentos: las rutas de este proyecto no tienen espacios.
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
@@ -18,8 +19,10 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit
 
 # --- 1) Flujo diario ---
 $name = "Apuesta Segura - flujo diario"
-$action = New-ScheduledTaskAction -Execute "cmd.exe" `
-    -Argument "/c $root\daily.bat auto >> $root\backend\daily.log 2>&1" `
+# Via run_hidden.vbs: sin ventana de consola (el Programador abria una visible
+# en cada corrida aunque la app no se estuviera usando).
+$action = New-ScheduledTaskAction -Execute "wscript.exe" `
+    -Argument "//B //Nologo $root\run_hidden.vbs $root\daily.bat auto $root\backend\daily.log" `
     -WorkingDirectory $root
 $daily = New-ScheduledTaskTrigger -Daily -At 08:00
 $logon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -32,8 +35,8 @@ Write-Output ("Tarea '{0}' registrada. Estado: {1}" -f $name, $t.State)
 
 # --- 2) Liquidacion cada 2 horas ---
 $name2 = "Apuesta Segura - liquidar"
-$action2 = New-ScheduledTaskAction -Execute "cmd.exe" `
-    -Argument "/c $root\settle.bat auto >> $root\backend\settle.log 2>&1" `
+$action2 = New-ScheduledTaskAction -Execute "wscript.exe" `
+    -Argument "//B //Nologo $root\run_hidden.vbs $root\settle.bat auto $root\backend\settle.log" `
     -WorkingDirectory $root
 # Repeticion cada 2 h durante 10 anos (el Programador no acepta "indefinido"), empezando dentro de 5 minutos.
 $every2h = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) `
