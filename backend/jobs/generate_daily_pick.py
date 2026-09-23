@@ -124,7 +124,7 @@ def _select_top(candidates: list[Prediction], n: int) -> list[Prediction]:
     return top
 
 
-def run(model_probabilities_fn, day: date | None = None):
+def run(model_probabilities_fn, day: date | None = None, scope: str | None = None):
     """model_probabilities_fn(match) -> dict[market_selection] = probability
 
     Se inyecta como parámetro para desacoplar el job de la implementación
@@ -134,6 +134,12 @@ def run(model_probabilities_fn, day: date | None = None):
     db = SessionLocal()
     try:
         matches = _todays_matches(db, day)
+        # scope="colombia": solo el apartado colombiano (p. ej. para traer las
+        # cuotas de un partido de la noche sin tocar los picks de Europa).
+        if scope == "colombia":
+            matches = [m for m in matches if is_colombian(m)]
+        elif scope == "europa":
+            matches = [m for m in matches if not is_colombian(m)]
 
         # Idempotencia: si el job se corre más de una vez el mismo día (ej.
         # las cuotas se movieron y se quiere recalcular), hay que limpiar las
@@ -230,6 +236,8 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=None, help="Día (UTC) a generar, YYYY-MM-DD. Por defecto hoy.")
+    parser.add_argument("--scope", choices=["europa", "colombia"], default=None,
+                        help="Solo un apartado; por defecto ambos.")
     args = parser.parse_args()
     day = date.fromisoformat(args.date) if args.date else None
 
@@ -243,7 +251,7 @@ def main():
         return predict_match_probabilities(prediction_db, match, models)
 
     try:
-        run(model_probabilities_fn, day)
+        run(model_probabilities_fn, day, args.scope)
     finally:
         prediction_db.close()
 

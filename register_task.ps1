@@ -46,3 +46,17 @@ Register-ScheduledTask -TaskName $name2 -Action $action2 -Trigger $every2h -Sett
     -Force | Out-Null
 $t2 = Get-ScheduledTask -TaskName $name2
 Write-Output ("Tarea '{0}' registrada. Estado: {1}" -f $name2, $t2.State)
+
+# --- 3) Colombia a las 19:10 ---
+# La cuota se renueva a las 19:00 (00:00 UTC) y muchos partidos colombianos
+# empiezan entre 19:30 y 21:00: sin esto sus cuotas llegarían tarde.
+$name3 = "Apuesta Segura - Colombia"
+$action3 = New-ScheduledTaskAction -Execute "wscript.exe" `
+    -Argument "//B //Nologo $root\run_hidden.vbs $root\colombia_ahora.bat auto $root\backend\colombia.log" `
+    -WorkingDirectory $root
+$at1910 = New-ScheduledTaskTrigger -Daily -At 19:10
+Register-ScheduledTask -TaskName $name3 -Action $action3 -Trigger $at1910 -Settings $settings `
+    -Description "Cuotas y picks del apartado colombiano para los partidos de la noche (1 peticion por partido)." `
+    -Force | Out-Null
+$t3 = Get-ScheduledTask -TaskName $name3
+Write-Output ("Tarea '{0}' registrada. Estado: {1}" -f $name3, $t3.State)
