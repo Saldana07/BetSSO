@@ -1,16 +1,20 @@
 """Construye la tabla de factores de árbitro para tarjetas (ver
 ml/features/referees.py) y la valida antes de activarla.
 
-Fuentes:
-  - data/raw/referees/{división}_{temporada}.json: partidos con árbitro de
-    API-Football (ml/ingestion/import_referees.py), cruzados con las tarjetas
-    del CSV por fecha y equipos;
-  - partidos de la BD con árbitro y estadísticas (temporada en curso, que el
-    plan gratuito no deja descargar por liga: se van acumulando con la
-    liquidación).
+Fuentes (sin duplicar partidos; manda la primera):
+  - columna Referee del histórico: copias de football-data en Internet
+    Archive (ligas inglesas y escocesas, 2017-18 a hoy; misma fuente que las
+    tarjetas);
+  - data/raw/referees/{división}_{temporada}.json: API-Football, las 22
+    divisiones, 2022-2024 (ml/ingestion/import_referees.py);
+  - partidos de la BD con árbitro y estadísticas (temporada en curso).
 
-Validación (sin fuga): partidos ordenados por fecha; para cada partido de la
-última temporada histórica el factor usa solo partidos ANTERIORES de ese
+El total esperado de cada partido ya incluye el ajuste validado por
+desequilibrio del mercado (ml/features/market_adjustment.py): el árbitro
+explica lo que queda, no lo que ya explican las cuotas.
+
+Validación (sin fuga): partidos ordenados por fecha; para cada partido de las
+temporadas 2024-25 y 2025-26 el factor usa solo partidos ANTERIORES de ese
 árbitro. Se compara el Brier de las líneas 3.5 / 4.5 / 5.5 con y sin factor,
 por partido, y se exige t <= -2 (mejora que no sea ruido). Si no, la tabla se
 guarda con validated=False y el sistema no la usa.
@@ -29,12 +33,14 @@ import pandas as pd
 from sqlalchemy import select
 
 from ml.features.count_stats import (
-    CARDS, DIVISION_COUNTRY, CountStatModel, competition_country, default_resolver, over_under_probabilities,
+    CARDS, DIVISION_COUNTRY, CountStatModel, competition_country, over_under_probabilities,
 )
+from ml.features.market_adjustment import MarketAdjustment
 from ml.features.referees import REFEREE_PATH, referee_key, shrunk_factor
 
 RAW_DIR = Path(__file__).resolve().parents[2] / "data" / "raw" / "referees"
-TEST_FROM = pd.Timestamp("2024-07-01")   # última temporada descargable en el plan gratuito
+TEST_FROM = pd.Timestamp("2024-07-01")
+TEST_TO = pd.Timestamp("2026-07-01")
 VALIDATION_LINES = (3.5, 4.5, 5.5)
 T_REQUIRED = -2.0
 
@@ -87,32 +93,44 @@ def _db_rows(resolver) -> pd.DataFrame:
 
 def build() -> dict:
     model = CountStatModel(CARDS, calibration_path=None)
+    market = MarketAdjustment.load()
     resolver = model.resolver
+    df = model.df
+    key = ["MatchDate", "home_key", "away_key"]
+    cols = ["MatchDate", "home_key", "away_key", "HomeTeam", "AwayTeam", "country", "ref", "total", "p_home", "p_away"]
 
-    hist = _historical_rows(resolver)
-    joined = model.df.merge(hist, on=["MatchDate", "home_key", "away_key"], how="inner")
-    joined["total"] = joined["home_value"] + joined["away_value"]
+    archive = df[df["Referee"].notna()].copy() if "Referee" in df.columns else df.iloc[0:0].copy()
+    archive["country"] = archive["Division"].map(DIVISION_COUNTRY)
+    archive["ref"] = archive["Referee"].map(referee_key)
+    archive["total"] = archive["home_value"] + archive["away_value"]
+
+    api = df.merge(_historical_rows(resolver), on=key, how="inner")
+    api["total"] = api["home_value"] + api["away_value"]
+
+    frames = [archive[cols], api[cols]]
     db_rows = _db_rows(resolver)
-    frames = [joined[["MatchDate", "HomeTeam", "AwayTeam", "country", "ref", "total"]]]
     if len(db_rows):
-        frames.append(db_rows[["MatchDate", "HomeTeam", "AwayTeam", "country", "ref", "total"]])
-    data = pd.concat(frames, ignore_index=True).sort_values("MatchDate", kind="stable").reset_index(drop=True)
+        db_rows["p_home"] = None
+        db_rows["p_away"] = None
+        frames.append(db_rows[cols])
+    data = (pd.concat(frames, ignore_index=True).dropna(subset=["ref", "country"])
+            .drop_duplicates(key).sort_values("MatchDate", kind="stable").reset_index(drop=True))
 
     lam = []
     for r in data.itertuples():
         e = model.expected_values(r.HomeTeam, r.AwayTeam, r.MatchDate, r.country)
-        lam.append(sum(e) if e else np.nan)
+        lam.append(sum(e) * market.factor("cards", r.p_home, r.p_away) if e else np.nan)
     data["lam"] = lam
     data = data.dropna(subset=["lam"]).reset_index(drop=True)
-    print(f"Partidos con árbitro y tarjetas: {len(data)} (históricos {len(joined)}, temporada en curso {len(db_rows)}); "
-          f"árbitros: {data.groupby(['country', 'ref']).ngroups}")
+    print(f"Partidos con árbitro y tarjetas: {len(data)} (archivo football-data {len(archive)}, API {len(api)}, "
+          f"temporada en curso BD {len(db_rows)}); árbitros: {data.groupby(['country', 'ref']).ngroups}")
 
     # --- Validación walk-forward ---
     acc: dict[tuple[str, str], tuple[float, float]] = {}
     diffs, b0s, b1s = [], [], []
     for r in data.itertuples():
         a, l = acc.get((r.country, r.ref), (0.0, 0.0))
-        if r.MatchDate >= TEST_FROM and r.MatchDate < TEST_FROM + pd.DateOffset(years=1):
+        if TEST_FROM <= r.MatchDate < TEST_TO:
             f = shrunk_factor(a, l, r.lam)
             p0 = over_under_probabilities(r.lam, CARDS)
             p1 = over_under_probabilities(r.lam * f, CARDS)
@@ -149,7 +167,7 @@ def main():
     if report["n_test"] < 100:
         print(f"Validación: solo {report['n_test']} partidos de prueba (< 100). Tabla guardada SIN activar.")
         return
-    print(f"Validación en {report['n_test']} partidos de 2024-25 (factor solo con partidos anteriores): "
+    print(f"Validación en {report['n_test']} partidos de 2024-25 y 2025-26 (factor solo con partidos anteriores): "
           f"Brier {report['brier_without']} -> {report['brier_with']}, t = {report['t_stat']}")
     print("Factor árbitro ACTIVADO para tarjetas." if report["validated"]
           else "Mejora no significativa: tabla guardada SIN activar.")

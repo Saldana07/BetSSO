@@ -1155,6 +1155,48 @@ partidos próximos se actualiza al resincronizar (se designa 1-3 días antes).
   por liga, 20 partidos por petición, miles de peticiones al día, más
   ligas con estadísticas, lesiones). Decisión del usuario.
 
+## Solo datos gratuitos: archive.org, cuotas del histórico y árbitros (23/09)
+
+Petición del usuario: "hazlo con toda la información gratis que encuentres".
+Cada fuente se probó antes de entrar; lo que no mejoró no se usa.
+
+**1. football-data.co.uk vía Internet Archive** ([import_football_data_archive.py](backend/ml/ingestion/import_football_data_archive.py)).
+La fuente original de nuestro histórico está bloqueada en Colombia (Coljuegos),
+pero archive.org guarda copias de sus CSV varias veces al mes. Solo se usan
+copias ya archivadas. Verificación: en 357 partidos presentes en ambas
+fuentes, **4,284 de 4,284 valores idénticos**. Aporta:
+- la temporada en curso al día en 17 de 22 divisiones (211 partidos que el
+  espejo mensual aún no tenía; se refresca cada mañana);
+- el **árbitro** de las 9 ligas inglesas y escocesas desde 2017-18
+  (29,412 partidos, incluida la 2025-26 que la API gratis no da);
+- tarjetas de la National League 2016-2025, que el espejo no traía.
+
+La fusión no duplica: un partido del archivo es "el mismo" si coinciden
+división, fecha y local O visitante. Eso destapó un **error viejo**: el
+espejo escribe unas temporadas "Nott'm Forest" y otras "Nottm Forest", y el
+historial del Nottingham Forest (y del Gladbach) estaba partido en dos
+equipos. `normalize` ya ignora apóstrofos.
+
+**2. Cuotas 1X2 del histórico** ([market_adjustment.py](backend/ml/features/market_adjustment.py)).
+Ya estaban en el CSV (Bet365) y en cada partido que sincronizamos. El
+desequilibrio favorito/débil explica tarjetas que el modelo por equipos no
+ve: partidos parejos se calientan. Prueba en 2025-26 (7,701 partidos):
+**tarjetas t = −4.2 → activado** (coef −0.29); tiros, tiros a puerta,
+córners y faltas no pasaron → no se usa ahí. Calibración y validación se
+rehicieron con el ajuste incluido.
+
+**3. Árbitro** ([build_referee_factors.py](backend/ml/training/build_referee_factors.py)).
+Con archivo + API (59 de 66 liga-temporadas ya bajadas): 40,698 partidos,
+733 árbitros. Prueba sin fuga en 10,422 partidos de 2024-25 y 2025-26:
+Brier 0.2203 → 0.2178, **t = −4.6 → activado** para tarjetas (el piloto de
+3 ligas daba t = −1.8 y no se activó; con más datos se confirmó). Se aplica
+sobre el total ya ajustado por cuotas.
+
+**Descartadas (probadas o evaluadas):** Holt-Winters/forma reciente (±0.001),
+Dixon-Coles con ρ de libro (empeora), cuotas del mercado en tiros/faltas/
+córners (ruido), xG para goles (mercado bloqueado porque la casa acierta
+más), alineaciones (llegan 1 h antes del partido).
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

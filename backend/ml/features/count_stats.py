@@ -52,6 +52,18 @@ from scipy.stats import nbinom, poisson
 from ml.features.poisson_xg import expected_goals, team_strengths
 
 CSV_PATH = Path(__file__).resolve().parents[2] / "data" / "raw" / "club_football" / "Matches.csv"
+# Copias de football-data.co.uk en Internet Archive (ml/ingestion/import_football_data_archive.py):
+# misma fuente que el CSV, con la temporada en curso al día y el árbitro.
+ARCHIVE_DIR = Path(__file__).resolve().parents[2] / "data" / "raw" / "football_data_archive"
+# Columnas de football-data -> nombres del CSV del espejo. Las cuotas del
+# espejo son las de Bet365 (verificado: OddHome == B365H en el 100% de los casos).
+ARCHIVE_COLUMNS = {
+    "HomeTeam": "HomeTeam", "AwayTeam": "AwayTeam",
+    "HS": "HomeShots", "AS": "AwayShots", "HST": "HomeTarget", "AST": "AwayTarget",
+    "HF": "HomeFouls", "AF": "AwayFouls", "HC": "HomeCorners", "AC": "AwayCorners",
+    "HY": "HomeYellow", "AY": "AwayYellow", "HR": "HomeRed", "AR": "AwayRed",
+    "Referee": "Referee", "B365H": "OddHome", "B365D": "OddDraw", "B365A": "OddAway",
+}
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 
 ROLLING_WINDOW = 20          # partidos recientes por equipo para estimar su tasa
@@ -131,13 +143,13 @@ TEAM_ALIASES = {
     "manchester city": "man city",
     "tottenham": "tottenham",
     "wolves": "wolves",
-    "nottingham forest": "nott'm forest",
+    "nottingham forest": "nottm forest",
     "newcastle": "newcastle",
     "inter": "inter",
     "as roma": "roma",
     "bayer leverkusen": "leverkusen",
     "borussia dortmund": "dortmund",
-    "borussia monchengladbach": "m'gladbach",
+    "borussia monchengladbach": "mgladbach",
     "vfb stuttgart": "stuttgart",
     "sporting cp": "sp lisbon",
     "sc braga": "sp braga",
@@ -319,14 +331,19 @@ class TeamResolver:
 
 
 def normalize(name: str) -> str:
+    """Sin tildes, puntos ni apóstrofos: el propio espejo escribe unas
+    temporadas "Nott'm Forest" y otras "Nottm Forest", y eso partía en dos el
+    historial del equipo."""
     stripped = unicodedata.normalize("NFKD", name)
     stripped = "".join(c for c in stripped if not unicodedata.combining(c))
-    return " ".join(stripped.lower().replace(".", "").split())
+    for ch in (".", "'", "’"):
+        stripped = stripped.replace(ch, "")
+    return " ".join(stripped.lower().split())
 
 
 def _resolve_key(team_name: str) -> str:
     key = normalize(team_name)
-    return TEAM_ALIASES.get(key, key)
+    return normalize(TEAM_ALIASES.get(key, key))
 
 
 def _cutoff(as_of: date | datetime) -> pd.Timestamp:
@@ -338,9 +355,69 @@ def _cutoff(as_of: date | datetime) -> pd.Timestamp:
     return ts.normalize()
 
 
-@lru_cache(maxsize=1)
+def _archive_files() -> list[Path]:
+    return sorted(ARCHIVE_DIR.glob("*/*.csv")) if ARCHIVE_DIR.exists() else []
+
+
+def _raw_signature() -> tuple:
+    """Cambia cuando cambia algún archivo de datos: invalida las cachés (el
+    servidor de la API vive días y el archivo se refresca a diario)."""
+    return tuple((str(p), p.stat().st_mtime) for p in [CSV_PATH, *_archive_files()] if p.exists())
+
+
+def _read_archive() -> pd.DataFrame:
+    frames = []
+    for path in _archive_files():
+        try:
+            df = pd.read_csv(path, encoding="utf-8-sig", on_bad_lines="skip")
+        except UnicodeDecodeError:
+            df = pd.read_csv(path, encoding="latin-1", on_bad_lines="skip")
+        if "HomeTeam" not in df.columns or "Date" not in df.columns:
+            continue
+        df = df.dropna(subset=["HomeTeam", "AwayTeam", "Date"])
+        out = pd.DataFrame({"Division": path.stem,
+                            "MatchDate": pd.to_datetime(df["Date"], dayfirst=True, errors="coerce", format="mixed")})
+        for src, dst in ARCHIVE_COLUMNS.items():
+            out[dst] = df[src].to_numpy() if src in df.columns else None
+        frames.append(out.dropna(subset=["MatchDate"]))
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _merge_archive(df: pd.DataFrame, archive: pd.DataFrame) -> pd.DataFrame:
+    """Suma el archivo al espejo SIN duplicar partidos.
+
+    Un partido del archivo es "el mismo" que uno del espejo si coinciden
+    división, fecha y el local O el visitante (un equipo no juega dos veces el
+    mismo día; así un nombre escrito distinto no crea un duplicado). Para esos
+    se toma del archivo solo lo que al espejo le falta (árbitro; estadísticas
+    ausentes, como la National League 2016-2025). Los que no están en el
+    espejo se añaden (temporada en curso, partidos que el espejo no trae)."""
+    archive = archive.copy()
+    archive["home_key"] = archive["HomeTeam"].map(normalize)
+    archive["away_key"] = archive["AwayTeam"].map(normalize)
+    home_key = ["Division", "MatchDate", "home_key"]
+    away_key = ["Division", "MatchDate", "away_key"]
+    in_mirror = (pd.MultiIndex.from_frame(archive[home_key]).isin(pd.MultiIndex.from_frame(df[home_key]))
+                 | pd.MultiIndex.from_frame(archive[away_key]).isin(pd.MultiIndex.from_frame(df[away_key])))
+
+    fill_cols = [c for c in archive.columns if c in df.columns and c not in (*home_key, "away_key", "HomeTeam", "AwayTeam")]
+    matched = archive[in_mirror].drop_duplicates(home_key)[home_key + fill_cols]
+    df = df.merge(matched, on=home_key, how="left", suffixes=("", "__arch"))
+    for c in fill_cols:
+        df[c] = df[c].where(df[c].notna(), df[f"{c}__arch"])
+    df = df.drop(columns=[f"{c}__arch" for c in fill_cols])
+
+    new = archive[~in_mirror].drop_duplicates(home_key)
+    return pd.concat([df, new[[c for c in df.columns if c in new.columns]]], ignore_index=True)
+
+
 def _load_raw() -> pd.DataFrame:
-    cols = {"Division", "MatchDate", "HomeTeam", "AwayTeam"}
+    return _load_raw_cached(_raw_signature())
+
+
+@lru_cache(maxsize=1)
+def _load_raw_cached(signature: tuple) -> pd.DataFrame:
+    cols = {"Division", "MatchDate", "HomeTeam", "AwayTeam", "OddHome", "OddDraw", "OddAway"}
     for s in ALL_SPECS:
         cols.update((s.home_col, s.away_col))
         for h, a, _ in s.extra_cols:
@@ -349,11 +426,27 @@ def _load_raw() -> pd.DataFrame:
     df["MatchDate"] = pd.to_datetime(df["MatchDate"])
     df["home_key"] = df["HomeTeam"].map(normalize)
     df["away_key"] = df["AwayTeam"].map(normalize)
-    return df.sort_values("MatchDate").reset_index(drop=True)
+    df["Referee"] = None
+
+    archive = _read_archive()
+    if len(archive):
+        df = _merge_archive(df, archive)
+
+    # Probabilidades 1X2 de la casa sin margen: el ajuste de tarjetas por
+    # desequilibrio entre favorito y débil (ver MarketAdjustment).
+    inv = 1.0 / df[["OddHome", "OddDraw", "OddAway"]].apply(pd.to_numeric, errors="coerce")
+    total = inv.sum(axis=1, min_count=3)
+    df["p_home"] = inv["OddHome"] / total
+    df["p_away"] = inv["OddAway"] / total
+    return df.sort_values("MatchDate", kind="stable").reset_index(drop=True)
+
+
+def default_resolver() -> TeamResolver:
+    return _resolver_cached(_raw_signature())
 
 
 @lru_cache(maxsize=1)
-def default_resolver() -> TeamResolver:
+def _resolver_cached(signature: tuple) -> TeamResolver:
     return TeamResolver.from_frame(_load_raw())
 
 
@@ -441,7 +534,8 @@ def load_stat_frame(spec: StatSpec) -> pd.DataFrame:
     for h, a, w in spec.extra_cols:
         home = home + w * df[h].astype(float)
         away = away + w * df[a].astype(float)
-    out = df[["Division", "MatchDate", "HomeTeam", "AwayTeam", "home_key", "away_key"]].copy()
+    extra = [c for c in ("Referee", "p_home", "p_away") if c in df.columns]
+    out = df[["Division", "MatchDate", "HomeTeam", "AwayTeam", "home_key", "away_key", *extra]].copy()
     out["home_value"] = home.to_numpy()
     out["away_value"] = away.to_numpy()
     return out.reset_index(drop=True)
@@ -605,9 +699,11 @@ class CountStatModels:
         self.build(overlay_raw)
 
     def build(self, overlay_raw: pd.DataFrame | None) -> None:
-        from ml.features.referees import RefereeFactors  # evita import circular
+        from ml.features.market_adjustment import MarketAdjustment  # evita import circular
+        from ml.features.referees import RefereeFactors
 
-        # None si no hay tabla o si su validación no fue significativa.
+        # Ajustes validados del total esperado (vacíos / None si no pasaron su prueba).
+        self.market = MarketAdjustment.load()
         self.referees = RefereeFactors.load()
         self.overlay_report: dict[str, dict] = {}
         models = {}
@@ -627,30 +723,36 @@ class CountStatModels:
         return (time.monotonic() - self.built_at) / 3600
 
     def _scale(self, key: str, model: "CountStatModel", home_team: str, away_team: str, as_of,
-               country: str | None, referee: str | None) -> float:
-        """Factor árbitro: solo tarjetas (en faltas no mejoró) y solo si la tabla
-        pasó su validación (ml/training/build_referee_factors.py)."""
+               country: str | None, referee: str | None,
+               p_home: float | None = None, p_away: float | None = None) -> float:
+        """Ajustes validados del total esperado, multiplicados:
+          - desequilibrio del mercado 1X2 (ml/features/market_adjustment.py);
+          - árbitro, solo tarjetas (ml/features/referees.py).
+        Cada uno vale 1.0 si no pasó su prueba o si falta el dato."""
+        scale = self.market.factor(key, p_home, p_away)
         if key != "cards" or self.referees is None or not referee:
-            return 1.0
+            return scale
         exp = model.expected_values(home_team, away_team, as_of, country)
-        return self.referees.factor(country, referee, sum(exp)) if exp else 1.0
+        return scale * self.referees.factor(country, referee, sum(exp) * scale) if exp else scale
 
     def market_probabilities(self, home_team: str, away_team: str, as_of: date | datetime,
-                             country: str | None = None, referee: str | None = None) -> dict[str, float]:
+                             country: str | None = None, referee: str | None = None,
+                             p_home: float | None = None, p_away: float | None = None) -> dict[str, float]:
         out: dict[str, float] = {}
         for key, model in self.models.items():
-            scale = self._scale(key, model, home_team, away_team, as_of, country, referee)
+            scale = self._scale(key, model, home_team, away_team, as_of, country, referee, p_home, p_away)
             probs = model.market_probabilities(home_team, away_team, as_of, country, scale)
             if probs:
                 out.update(probs)
         return out
 
     def expected_totals(self, home_team: str, away_team: str, as_of: date | datetime,
-                        country: str | None = None, referee: str | None = None) -> dict[str, float | None]:
+                        country: str | None = None, referee: str | None = None,
+                        p_home: float | None = None, p_away: float | None = None) -> dict[str, float | None]:
         """Total esperado por estadística (para diagnósticos / UI)."""
         out = {}
         for key, model in self.models.items():
             exp = model.expected_values(home_team, away_team, as_of, country)
-            scale = self._scale(key, model, home_team, away_team, as_of, country, referee)
+            scale = self._scale(key, model, home_team, away_team, as_of, country, referee, p_home, p_away)
             out[key] = sum(exp) * scale if exp else None
         return out

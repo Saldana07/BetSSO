@@ -22,10 +22,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import joblib
-from sqlalchemy import distinct, or_, select
+from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Match
+from app.models import Match, Odds
 from ml.features.count_stats import MODELS_DIR, CountStatModels, competition_country
 from ml.features.count_stats_overlay import load_overlay_raw
 from ml.features.elo import elo_win_draw_loss_probs, update_elo
@@ -273,6 +273,28 @@ def compute_pre_match_features(db: Session, match: Match) -> dict:
     }
 
 
+def _market_1x2(db: Session, match: Match) -> tuple[float | None, float | None]:
+    """P(local), P(visitante) de las casas sin margen, con la última foto de
+    cuotas 1X2 ANTERIOR al inicio. (None, None) si no hay cuotas."""
+    from ml.value_betting.market import fair_probabilities
+
+    last = db.execute(
+        select(func.max(Odds.recorded_at)).where(
+            Odds.match_id == match.id, Odds.market == "1X2", Odds.snapshot_type == "LIVE",
+            Odds.recorded_at < match.kickoff_utc,
+        )
+    ).scalar_one_or_none()
+    if last is None:
+        return None, None
+    by_bookmaker: dict[str, dict[str, float]] = {}
+    for o in db.execute(select(Odds).where(
+        Odds.match_id == match.id, Odds.market == "1X2", Odds.snapshot_type == "LIVE", Odds.recorded_at == last,
+    )).scalars():
+        by_bookmaker.setdefault(o.bookmaker, {})[o.selection] = float(o.odds_value)
+    fair, _ = fair_probabilities("1X2", by_bookmaker)
+    return fair.get("HOME"), fair.get("AWAY")
+
+
 def predict_match_probabilities(db: Session, match: Match, models: TrainedModels) -> dict[str, float]:
     """Devuelve probabilidades por mercado, con las claves que espera
     jobs/generate_daily_pick.py (ej. '1X2_HOME', 'OU_2.5_OVER', 'BTTS_YES')."""
@@ -299,12 +321,14 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
     # el histórico: un "Nacional" uruguayo no hereda al Nacional portugués.
     models.ensure_count_overlay(db)
     country = competition_country(match.league.name, match.league.country) if match.league else None
-    # El árbitro (si la API ya lo publicó) ajusta las tarjetas: ver ml/features/referees.py.
+    # El árbitro (si la API ya lo publicó) y el desequilibrio del mercado 1X2
+    # ajustan las tarjetas: ver ml/features/referees.py y market_adjustment.py.
+    p_home, p_away = _market_1x2(db, match)
     count_probs = models.count_stats.market_probabilities(
-        match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee
+        match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee, p_home, p_away
     )
     expected_totals = models.count_stats.expected_totals(
-        match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee
+        match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee, p_home, p_away
     )
 
     return {

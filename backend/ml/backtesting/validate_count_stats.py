@@ -32,13 +32,17 @@ MIN_BRIER_GAIN = 0.0005  # por debajo de esto la "mejora" es ruido
 
 
 def run(spec: StatSpec, since: str, max_matches: int) -> dict:
+    from ml.features.market_adjustment import MarketAdjustment
+
     model = CountStatModel(spec)
+    market = MarketAdjustment.load()   # misma tubería que producción
     df = model.df
     test = df[df["MatchDate"] >= pd.Timestamp(since)].head(max_matches)
 
     rows = []
     for m in test.itertuples():
-        probs = model.market_probabilities(m.HomeTeam, m.AwayTeam, m.MatchDate)
+        scale = market.factor(spec.key, getattr(m, "p_home", None), getattr(m, "p_away", None))
+        probs = model.market_probabilities(m.HomeTeam, m.AwayTeam, m.MatchDate, scale=scale)
         if probs is None:
             continue
         total = m.home_value + m.away_value

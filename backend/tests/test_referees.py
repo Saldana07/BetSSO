@@ -51,8 +51,11 @@ def test_el_factor_solo_toca_tarjetas():
         def factor(self, country, referee, lam):
             return 2.0
 
+    from ml.features.market_adjustment import MarketAdjustment
+
     models = CountStatModels.__new__(CountStatModels)
     models.referees = Always({})
+    models.market = MarketAdjustment({})   # sin ajuste por cuotas: se mide solo el árbitro
     model = object()
     assert models._scale("cards", type("M", (), {"expected_values": lambda *a: (2.0, 2.0)})(), "A", "B",
                          pd.Timestamp("2025-01-01"), "England", "A. Taylor") == 2.0

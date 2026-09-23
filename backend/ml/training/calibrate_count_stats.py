@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 
-from ml.features.count_stats import ALL_SPECS, SPECS_BY_KEY, CountStatModel, StatSpec
+from ml.features.count_stats import ALL_SPECS, SPECS_BY_KEY, CountStatModel, StatSpec, over_under_probabilities
 
 FIT_START = "2024-09-01"
 HOLDOUT_START = "2025-09-01"
@@ -36,6 +36,12 @@ P_MIN, P_MAX = 0.02, 0.98
 
 
 def walk_forward_predictions(model: CountStatModel, start: str, end: str | None = None) -> pd.DataFrame:
+    """Predicciones crudas (sin isotónica) con los ajustes validados del total
+    esperado (desequilibrio del mercado): la isotónica se ajusta sobre lo que
+    producción realmente le pasa."""
+    from ml.features.market_adjustment import MarketAdjustment
+
+    market = MarketAdjustment.load()
     spec = model.spec
     df = model.df[model.df["MatchDate"] >= pd.Timestamp(start)]
     if end is not None:
@@ -45,7 +51,8 @@ def walk_forward_predictions(model: CountStatModel, start: str, end: str | None 
         exp = model.expected_values(m.HomeTeam, m.AwayTeam, m.MatchDate)
         if exp is None:
             continue
-        probs = model.raw_probabilities(*exp)
+        scale = market.factor(spec.key, getattr(m, "p_home", None), getattr(m, "p_away", None))
+        probs = over_under_probabilities(sum(exp) * scale, spec)
         total = m.home_value + m.away_value
         row = {"date": m.MatchDate, "lambda": sum(exp), "total": total}
         for line in spec.lines:

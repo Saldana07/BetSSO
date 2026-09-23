@@ -56,7 +56,9 @@ docker compose -f ..\docker-compose.yml exec -T db pg_isready -U bet_user -d bet
 
 REM Arbitros 2022-2024 para el factor de tarjetas: una sola vez, se completa en 2-3 dias.
 REM No es fatal: si falla, el resto del flujo sigue.
-echo [0/8] Historico de arbitros (solo lo que falte)...
+echo [0/8] Datos gratuitos: copias de football-data en archive.org y arbitros (solo lo que falte)...
+REM Temporada en curso al dia (misma fuente que el historico) + arbitros. No fatal.
+%PY% -m ml.ingestion.import_football_data_archive
 %PY% -m ml.ingestion.import_referees
 
 echo [1/8] Trayendo resultado + estadisticas de partidos jugados (picks, mercados evaluados, historico)...
