@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { ApiError, getDailyCandidates, getMatchMarkets, getPerformance, getTodaysMatches, getTopPicks, localDay } from './api'
+import { ApiError, getDailyCandidates, getMatchMarkets, getModelVsMarket, getPerformance, getTodaysMatches, getTopPicks, localDay } from './api'
 import { CandidateRow } from './components/CandidateRow'
 import { ConfidenceFilter } from './components/ConfidenceFilter'
 import { DaySelector, dayLabel, type DayOffset } from './components/DaySelector'
 import { MatchDetail, type MatchRef } from './components/MatchDetail'
+import { ModelVsMarket } from './components/ModelVsMarket'
 import { PerformanceBar } from './components/PerformanceBar'
 import { PickOfTheDayCard } from './components/PickOfTheDayCard'
-import type { ConfidenceLevel, DailyCandidate, MatchSummary, Performance, PickOfTheDay } from './types'
+import type { ConfidenceLevel, DailyCandidate, MatchSummary, ModelVsMarket as ModelVsMarketData, Performance, PickOfTheDay } from './types'
 
 type PicksState =
   | { status: 'loading' }
@@ -23,6 +24,7 @@ function App() {
   const [candidates, setCandidates] = useState<DailyCandidate[]>([])
   const [matches, setMatches] = useState<MatchSummary[]>([])
   const [performance, setPerformance] = useState<Performance | null>(null)
+  const [modelVsMarket, setModelVsMarket] = useState<ModelVsMarketData | null>(null)
   const [selected, setSelected] = useState<Selected | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -49,6 +51,10 @@ function App() {
     getPerformance()
       .then(setPerformance)
       .catch(() => setPerformance(null))
+
+    getModelVsMarket()
+      .then(setModelVsMarket)
+      .catch(() => setModelVsMarket(null))
 
     getTodaysMatches(day)
       .then(setMatches)
@@ -103,6 +109,11 @@ function App() {
         {performance && (
           <div className="mb-6">
             <PerformanceBar performance={performance} />
+          </div>
+        )}
+        {modelVsMarket && (
+          <div className="-mt-3 mb-6">
+            <ModelVsMarket data={modelVsMarket} />
           </div>
         )}
 

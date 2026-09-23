@@ -1,5 +1,6 @@
 """Modelos de conteo (córners, tiros, tarjetas...): índice temporal sin fuga,
 combinación de columnas y capa de calibración."""
+import numpy as np
 import pandas as pd
 import pytest
 from sklearn.isotonic import IsotonicRegression
@@ -146,3 +147,42 @@ def test_dispersion_cero_es_poisson():
     from ml.features.count_stats import total_cdf
 
     assert total_cdf(9.5, 0.0) == pytest.approx(poisson.cdf(range(81), 9.5))
+
+
+def test_todos_los_alias_apuntan_a_equipos_del_csv():
+    # Un alias con destino inexistente deja al equipo sin predicción en silencio
+    # (pasó con "psv eindhoven" -> "psv" desde el principio).
+    from ml.features.count_stats import TEAM_ALIASES, default_resolver
+
+    resolver = default_resolver()
+    rotos = {k: v for k, v in TEAM_ALIASES.items() if v not in resolver.last_division}
+    assert rotos == {}
+
+
+def _resolver():
+    from ml.features.count_stats import TeamResolver
+
+    d = np.datetime64("2026-08-30")
+    return TeamResolver({
+        "magdeburg": (d, "D2"), "karlsruhe": (d, "D2"), "nacional": (d, "P1"), "barcelona": (d, "SP1"),
+        "man united": (d, "E0"), "man city": (d, "E0"), "celtic": (d, "SC0"),
+    })
+
+
+@pytest.mark.parametrize(
+    "name,country,expected",
+    [
+        ("1. FC Magdeburg", "Germany", "magdeburg"),    # núcleo sin forma jurídica
+        ("Karlsruher SC", "Germany", "karlsruhe"),      # difuso
+        ("Nacional", "Portugal", "nacional"),
+        ("Nacional", "Uruguay", None),                  # liga no cubierta: aunque se llame igual
+        ("Barcelona SC", "Ecuador", None),
+        ("Barcelona SC", "World", None),                # internacional: nada difuso
+        ("Barcelona", "World", "barcelona"),            # internacional: exacto sí
+        ("Celtic", "England", None),                    # país de la liga != país del equipo
+        ("Manchester United", "England", "man united"), # alias
+        ("Magdeburg", None, "magdeburg"),               # sin país: sin guarda
+    ],
+)
+def test_resolver_de_nombres(name, country, expected):
+    assert _resolver().resolve(name, country) == expected

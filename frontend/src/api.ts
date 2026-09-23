@@ -3,6 +3,7 @@ import type {
   DailyCandidate,
   MatchMarkets,
   MatchSummary,
+  ModelVsMarket,
   Performance,
   PickOfTheDay,
   Simulation,
@@ -70,4 +71,8 @@ export function getTodaysMatches(day?: string): Promise<MatchSummary[]> {
 
 export function getMatchMarkets(matchId: number): Promise<MatchMarkets> {
   return getJson<MatchMarkets>(`/api/predictions/${matchId}/markets`)
+}
+
+export function getModelVsMarket(): Promise<ModelVsMarket> {
+  return getJson<ModelVsMarket>('/api/predictions/model-vs-market')
 }

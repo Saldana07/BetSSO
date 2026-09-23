@@ -51,6 +51,7 @@ CREATE TABLE matches (
     away_red        SMALLINT,
     home_fouls      SMALLINT,
     away_fouls      SMALLINT,
+    stats_fetched_at TIMESTAMPTZ,                  -- última petición de resultado + estadísticas por ID
     referee         VARCHAR(120),
     venue           VARCHAR(120),
     weather_temp_c  NUMERIC(4,1),
@@ -183,3 +184,25 @@ CREATE TABLE injuries (
     expected_return DATE
 );
 CREATE INDEX idx_injuries_team ON injuries (team_id, reported_at);
+
+-- Todos los mercados evaluados (no solo los picks), para medir el modelo contra
+-- la casa: market_fair_probability es la probabilidad de las casas sin margen.
+CREATE TABLE IF NOT EXISTS market_evaluations (
+    id                      BIGSERIAL PRIMARY KEY,
+    match_id                INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    model_version           VARCHAR(40) NOT NULL,
+    market                  VARCHAR(30) NOT NULL,
+    selection               VARCHAR(20) NOT NULL,
+    model_probability       NUMERIC(6,4) NOT NULL,
+    market_fair_probability NUMERIC(6,4),
+    n_bookmakers            SMALLINT NOT NULL DEFAULT 0,
+    best_odds               NUMERIC(6,3) NOT NULL,
+    best_bookmaker          VARCHAR(60),
+    expected_value          NUMERIC(8,4) NOT NULL,
+    validation              VARCHAR(12) NOT NULL,
+    evaluated_at            TIMESTAMPTZ NOT NULL,
+    settled_at              TIMESTAMPTZ,
+    is_win                  BOOLEAN,
+    UNIQUE (match_id, model_version, market, selection)
+);
+CREATE INDEX IF NOT EXISTS ix_market_evaluations_match_id ON market_evaluations(match_id);

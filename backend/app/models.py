@@ -74,6 +74,9 @@ class Match(Base):
     away_red: Mapped[int | None] = mapped_column(SmallInteger)
     home_fouls: Mapped[int | None] = mapped_column(SmallInteger)
     away_fouls: Mapped[int | None] = mapped_column(SmallInteger)
+    # Última vez que se pidieron resultado + estadísticas por ID. Evita volver a
+    # pagar la petición por partidos cuya API no publica estadísticas.
+    stats_fetched_at: Mapped[datetime | None]
     referee: Mapped[str | None] = mapped_column(String(120))
     venue: Mapped[str | None] = mapped_column(String(120))
     ext_prob_home: Mapped[float | None] = mapped_column(Numeric(6, 4))
@@ -190,6 +193,42 @@ class Prediction(Base):
     closing_bookmaker: Mapped[str | None] = mapped_column(String(60))
 
     match: Mapped["Match"] = relationship(back_populates="predictions")
+
+
+class MarketEvaluation(Base):
+    """TODOS los mercados evaluados de cada partido, no solo los picks.
+
+    Existe para responder la pregunta que el backtest contra la tasa base no
+    puede: ¿el modelo le gana a la CASA? Con 3-5 picks al día harían falta
+    meses; guardando cada mercado con cuota (y liquidándolo) hay cientos de
+    comparaciones por semana. `market_fair_probability` es la probabilidad de
+    la casa sin su margen (mediana entre casas con ambos lados publicados):
+    si el Brier del modelo no baja del Brier de esa columna, el modelo no
+    sabe nada que la casa no sepa, y el EV que muestra es ilusión.
+    """
+
+    __tablename__ = "market_evaluations"
+    __table_args__ = (
+        UniqueConstraint("match_id", "model_version", "market", "selection"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), index=True)
+    model_version: Mapped[str] = mapped_column(String(40))
+    market: Mapped[str] = mapped_column(String(30))
+    selection: Mapped[str] = mapped_column(String(20))
+    model_probability: Mapped[float] = mapped_column(Numeric(6, 4))
+    market_fair_probability: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    n_bookmakers: Mapped[int] = mapped_column(SmallInteger, default=0)
+    best_odds: Mapped[float] = mapped_column(Numeric(6, 3))
+    best_bookmaker: Mapped[str | None] = mapped_column(String(60))
+    expected_value: Mapped[float] = mapped_column(Numeric(8, 4))
+    validation: Mapped[str] = mapped_column(String(12))   # VALIDADO | SIN_VALIDAR | SIN_VENTAJA
+    evaluated_at: Mapped[datetime]
+    settled_at: Mapped[datetime | None]
+    is_win: Mapped[bool | None]
+
+    match: Mapped["Match"] = relationship()
 
 
 class BacktestResult(Base):

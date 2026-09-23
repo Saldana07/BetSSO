@@ -28,7 +28,7 @@ from app.database import SessionLocal
 from app.models import BacktestResult, Match, Odds
 from ml.ingestion.api_football_client import APIFootballClient, APIFootballError
 from ml.ingestion.mappers import upsert_odds_for_match
-from jobs.settle_predictions import load_fixture_stats as _load_fixture_stats
+from jobs.fetch_match_data import fetch_match as _fetch_match
 from ml.serving.predict import get_models, predict_match_probabilities
 from ml.value_betting.ev_kelly import expected_value
 from ml.value_betting.settlement import MissingStatsError, UnknownMarketError, bet_won
@@ -121,7 +121,7 @@ def main():
                 won = bet_won(market, selection, match.home_goals, match.away_goals, stats=match.stat_totals())
             except MissingStatsError:
                 # Mercado de conteo sin estadísticas cargadas: traerlas (1 petición) y reintentar.
-                _load_fixture_stats(client, match)
+                _fetch_match(client, db, match)
                 try:
                     won = bet_won(market, selection, match.home_goals, match.away_goals, stats=match.stat_totals())
                 except (MissingStatsError, UnknownMarketError):

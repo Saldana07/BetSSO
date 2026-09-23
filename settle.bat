@@ -28,10 +28,10 @@ REM daily.bat / start.bat): esta tarea corre cada 2 h y no debe abrir ventanas.
 docker info >nul 2>&1 || goto :nodocker
 docker compose -f ..\docker-compose.yml exec -T db pg_isready -U bet_user -d bet_db >nul 2>&1 || goto :nodocker
 
-echo [1/2] Trayendo resultados de los partidos con picks pendientes...
-%PY% -m jobs.sync_pending_results || goto :fail
+echo [1/2] Trayendo resultado + estadisticas de partidos jugados (con presupuesto de cuota)...
+%PY% -m jobs.fetch_match_data || goto :fail
 
-echo [2/2] Liquidando (resultado + estadisticas + cuota de cierre)...
+echo [2/2] Liquidando picks y mercados evaluados (+ cuota de cierre)...
 %PY% -m jobs.settle_predictions || goto :fail
 
 rmdir "%LOCK%" 2>nul

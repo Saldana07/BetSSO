@@ -197,17 +197,22 @@ class APIFootballClient:
         {team_id: {"corners": 5, "shots": 12, "shots_on_target": 4, "yellow": 2, "red": 0, "fouls": 11}}.
         None si la API aún no publicó nada. Un valor ausente queda en None
         (la liquidación de ese mercado espera; no se inventa un 0)."""
-        results = self._get("/fixtures/statistics", {"fixture": fixture_id})
-        if len(results) != 2:
+        return self.parse_fixture_statistics(self._get("/fixtures/statistics", {"fixture": fixture_id}))
+
+    @classmethod
+    def parse_fixture_statistics(cls, results: list[dict]) -> dict[int, dict[str, int | None]] | None:
+        """Bloque `statistics` (de /fixtures/statistics o de /fixtures?id=, que lo
+        trae junto al resultado en la misma petición) -> {team_id: {...}}."""
+        if not results or len(results) != 2:
             return None
         out: dict[int, dict[str, int | None]] = {}
         for team in results:
             team_id = (team.get("team") or {}).get("id")
             if team_id is None:
                 return None
-            stats: dict[str, int | None] = {k: None for k in self.FIXTURE_STAT_TYPES.values()}
+            stats: dict[str, int | None] = {k: None for k in cls.FIXTURE_STAT_TYPES.values()}
             for s in team.get("statistics", []):
-                key = self.FIXTURE_STAT_TYPES.get(s.get("type"))
+                key = cls.FIXTURE_STAT_TYPES.get(s.get("type"))
                 if key is None:
                     continue
                 value = s.get("value")
@@ -215,6 +220,11 @@ class APIFootballClient:
                 stats[key] = int(value) if value is not None else 0
             out[team_id] = stats
         return out
+
+    def quota(self) -> tuple[int, int]:
+        """(peticiones usadas hoy, límite diario). /status no gasta cuota."""
+        req = self.get_status().get("requests") or {}
+        return int(req.get("current", 0)), int(req.get("limit_day", 100))
 
     def get_fixture_corners(self, fixture_id: int) -> tuple[int, int] | None:
         """Compatibilidad: (córners local, córners visitante) asumiendo el orden de la API."""

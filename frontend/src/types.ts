@@ -168,3 +168,23 @@ export const SELECTION_LABELS: Record<string, string> = {
   YES: 'Sí',
   NO: 'No',
 }
+
+export interface ModelVsMarketFamily {
+  family: string
+  n_matches: number
+  n_markets: number
+  brier_model: number
+  /** Probabilidad de las casas sin su margen. */
+  brier_market: number
+  t_stat: number | null
+  verdict: 'MODELO' | 'CASA' | 'EMPATE' | 'POCA_MUESTRA'
+  value_bets: number
+  value_bets_won: number
+  value_bets_pnl: number
+}
+
+export interface ModelVsMarket {
+  evaluated: number
+  settled: number
+  families: ModelVsMarketFamily[]
+}

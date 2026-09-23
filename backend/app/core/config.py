@@ -33,6 +33,20 @@ class Settings(BaseSettings):
     # EV mínimo para que algo cuente como pick. Un +0.7% no es una recomendación:
     # no cubre ni el movimiento normal de la línea. Coincide con el piso de "MEDIA".
     min_pick_ev: float = 0.02
+    # Casas donde el usuario puede apostar, separadas por comas (ej. "Betano,Bet365").
+    # Vacío = todas. El EV de un pick solo existe en la casa que da esa cuota:
+    # si el pick sale de una casa donde no se puede apostar (Bet365 está
+    # bloqueada en Colombia), el EV mostrado no es el del usuario. La
+    # probabilidad "justa" del mercado se sigue calculando con TODAS las casas.
+    allowed_bookmakers: str = ""
+
+    @property
+    def allowed_bookmaker_set(self) -> frozenset[str]:
+        return frozenset(b.strip().lower() for b in self.allowed_bookmakers.split(",") if b.strip())
+
+    def bookmaker_allowed(self, bookmaker: str | None) -> bool:
+        allowed = self.allowed_bookmaker_set
+        return not allowed or (bookmaker or "").lower() in allowed
 
 
 @lru_cache

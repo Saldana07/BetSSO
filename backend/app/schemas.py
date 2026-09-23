@@ -141,3 +141,26 @@ class PerformanceResponse(BaseModel):
     clv_picks: int
     avg_clv_pct: float | None
     positive_clv_rate: float | None
+
+
+class ModelVsMarketFamily(BaseModel):
+    """Modelo contra la casa en una familia de mercados, sobre lo ya liquidado."""
+
+    family: str                 # CORNERS | SHOTS | SOT | CARDS | FOULS | 1X2 | GOALS_OU | BTTS | AH
+    n_matches: int              # unidad independiente (las líneas de un partido van juntas)
+    n_markets: int
+    brier_model: float
+    brier_market: float         # probabilidad de las casas sin margen
+    t_stat: float | None
+    verdict: str                # MODELO | CASA | EMPATE | POCA_MUESTRA
+    # "Si hubiera apostado todo lo que el sistema consideraba valor" (EV >= piso,
+    # cuota en rango, mercado validado, EV plausible), a la mejor cuota disponible.
+    value_bets: int
+    value_bets_won: int
+    value_bets_pnl: float
+
+
+class ModelVsMarketResponse(BaseModel):
+    evaluated: int              # mercados evaluados guardados (liquidados o no)
+    settled: int
+    families: list[ModelVsMarketFamily]

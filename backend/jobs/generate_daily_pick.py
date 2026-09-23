@@ -21,10 +21,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.database import SessionLocal
-from app.models import BacktestResult, Match, Odds, Prediction
+from app.models import BacktestResult, MarketEvaluation, Match, Odds, Prediction
+from jobs.market_evaluation import evaluate_match
 from ml.features.count_stats import ALL_SPECS
 from ml.value_betting.confidence import SkillEvidence
-from ml.value_betting.ev_kelly import evaluate_bet, is_safe_bet_candidate
 
 settings = get_settings()
 
@@ -59,14 +59,18 @@ def _todays_matches(db: Session, day: date | None = None) -> list[Match]:
     """Partidos SCHEDULED del día (UTC); hoy por defecto. Con --date el job
     genera los picks de mañana con las cuotas de hoy (se regeneran mañana
     con las cuotas frescas: el borrado de abajo lo hace idempotente)."""
+    now = datetime.now(timezone.utc)
     if day is None:
-        day = datetime.now(timezone.utc).date()
+        day = now.date()
     today_start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
     today_end = today_start + timedelta(days=1)
     stmt = select(Match).where(
         Match.kickoff_utc >= today_start,
         Match.kickoff_utc < today_end,
         Match.status == "SCHEDULED",
+        # Un partido ya empezado no admite apuesta pre-partido; y re-evaluarlo
+        # borraría sus evaluaciones con cuotas de antes del inicio.
+        Match.kickoff_utc > now,
     )
     return list(db.execute(stmt).scalars().all())
 
@@ -121,15 +125,22 @@ def run(model_probabilities_fn, day: date | None = None):
         # restricción única (match, modelo, mercado, selección) revienta.
         match_ids = [m.id for m in matches]
         if match_ids:
-            db.execute(
-                Prediction.__table__.delete().where(
-                    Prediction.match_id.in_(match_ids),
-                    Prediction.model_version == settings.model_version,
+            for table in (Prediction.__table__, MarketEvaluation.__table__):
+                db.execute(
+                    table.delete().where(
+                        table.c.match_id.in_(match_ids),
+                        table.c.model_version == settings.model_version,
+                    )
                 )
-            )
 
         candidates: list[Prediction] = []
+        n_evaluations = 0
         evidence_cache: dict[str, SkillEvidence] = {}
+
+        def evidence_for(market: str) -> SkillEvidence:
+            if market not in evidence_cache:
+                evidence_cache[market] = _skill_evidence(db, market)
+            return evidence_cache[market]
 
         skipped_no_history = 0
 
@@ -146,65 +157,20 @@ def run(model_probabilities_fn, day: date | None = None):
                 skipped_no_history += 1
                 continue
 
-            for market in MARKETS:
-                if market not in evidence_cache:
-                    evidence_cache[market] = _skill_evidence(db, market)
-                evidence = evidence_cache[market]
-                hist_accuracy = evidence.accuracy
-
-                odds_rows = _latest_odds(db, match.id, market)
-
-                # Varias casas de apuestas ofrecen la misma selección con cuotas
-                # distintas; nos quedamos con la MEJOR cuota disponible por
-                # selección (mayor pago para la misma probabilidad = mayor EV,
-                # y es la cuota que un apostador realmente conseguiría comparando
-                # casas). `predictions` es única por (match, modelo, mercado,
-                # selección) — no tiene sentido/cabida una fila por bookmaker.
-                best_odds_by_selection: dict[str, Odds] = {}
-                for odds_row in odds_rows:
-                    current_best = best_odds_by_selection.get(odds_row.selection)
-                    if current_best is None or odds_row.odds_value > current_best.odds_value:
-                        best_odds_by_selection[odds_row.selection] = odds_row
-
-                for odds_row in best_odds_by_selection.values():
-                    key = f"{market}_{odds_row.selection}"
-                    model_prob = probabilities.get(key)
-                    if model_prob is None:
-                        continue
-
-                    bet = evaluate_bet(model_prob, float(odds_row.odds_value), settings.kelly_fraction_cap)
-
-                    if not is_safe_bet_candidate(
-                        odds=float(odds_row.odds_value),
-                        expected_val=bet.expected_value,
-                        historical_skill=evidence.skill,
-                        odds_min=settings.odds_min,
-                        odds_max=settings.odds_max,
-                        min_ev=settings.min_pick_ev,
-                        min_historical_skill=settings.min_historical_skill,
-                        max_ev=settings.max_plausible_ev,
-                    ):
-                        continue
-
-                    prediction = Prediction(
-                        match_id=match.id,
-                        model_version=settings.model_version,
-                        market=market,
-                        selection=odds_row.selection,
-                        model_probability=model_prob,
-                        bookmaker=odds_row.bookmaker,
-                        bookmaker_odds=float(odds_row.odds_value),
-                        implied_probability=bet.implied_probability,
-                        expected_value=bet.expected_value,
-                        kelly_fraction=bet.kelly_fraction,
-                        historical_accuracy=hist_accuracy,
-                        historical_skill=evidence.skill,
-                        backtest_n_bets=evidence.n_bets,
-                        is_pick_of_day=False,
-                        generated_at=datetime.now(timezone.utc),
-                    )
-                    db.add(prediction)
-                    candidates.append(prediction)
+            # Todos los mercados con cuota quedan guardados como evaluación
+            # (para medir el modelo contra la casa); los que pasan el filtro
+            # estricto son candidatos a pick. Ver jobs/market_evaluation.py.
+            result = evaluate_match(
+                match, probabilities, MARKETS,
+                odds_for_market=lambda market, match_id=match.id: _latest_odds(db, match_id, market),
+                evidence_for_market=evidence_for,
+                settings=settings,
+                now=datetime.now(timezone.utc),
+            )
+            db.add_all(result.evaluations)
+            db.add_all(result.candidates)
+            n_evaluations += len(result.evaluations)
+            candidates.extend(result.candidates)
 
         db.flush()  # asigna IDs sin comitear aun
 
@@ -229,6 +195,8 @@ def run(model_probabilities_fn, day: date | None = None):
                 print(f"  {i}. match={p.match_id} {p.market}/{p.selection} odds={p.bookmaker_odds} EV={p.expected_value:.3f}")
         else:
             print("No se encontraron candidatos que cumplan los criterios hoy.")
+
+        print(f"{n_evaluations} mercados evaluados y guardados (para medir el modelo contra la casa).")
 
         if skipped_no_history:
             print(

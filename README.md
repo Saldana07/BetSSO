@@ -1057,6 +1057,61 @@ Límite conocido: si un partido ya terminó y la casa retiró el mercado
 no se puede capturar y queda vacía; el CLV se calcula solo sobre los picks
 que sí la tienen.
 
+## Medir contra la casa, no contra el azar (revisión del 22/09)
+
+Toda la validación anterior comparaba el modelo con la **tasa base** (el
+azar). Eso no dice si le gana a Bet365, que también conoce las tendencias
+y centra su línea en cada partido. Con 3-5 picks al día, medirlo solo con
+picks llevaría meses. Tres cambios, medidos antes de hacerlos:
+
+**1. Guardar y liquidar TODOS los mercados evaluados** (`market_evaluations`),
+no solo los picks: probabilidad del modelo, mejor cuota y la probabilidad
+de las casas **sin su margen** (mediana entre casas con ambos lados:
+[market.py](backend/ml/value_betting/market.py); el margen medido en tiros,
+tarjetas y córners es ~7%). [model_vs_market.py](backend/ml/value_betting/model_vs_market.py)
+compara el Brier de ambos con la unidad correcta — el **partido**, porque
+las 10 líneas de tiros de un partido aciertan o fallan juntas — y solo da
+veredicto con 30+ partidos y |t| ≥ 2. En la app: tarjeta "Modelo vs casa".
+Los partidos jugados desde el 14/09 se evaluaron con la última foto de
+cuotas **anterior al inicio** ([backfill_evaluations.py](backend/jobs/backfill_evaluations.py)).
+Primer veredicto (51 partidos): **en 1X2 la casa acierta más (t = 2.24)** —
+confirma, con datos nuevos, el bloqueo que dictó el backtest con cuotas
+reales. Tiros, tarjetas y faltas aún no tienen muestra.
+
+**2. Resultado + estadísticas en una sola petición.** `/fixtures?id=` trae
+ambos (antes se pedían por separado). El plan gratuito no permite varios
+partidos por petición (`ids`: "Free plans do not have access"), así que
+[fetch_match_data.py](backend/jobs/fetch_match_data.py) reparte la cuota
+con prioridades (picks > mercados evaluados > partidos de liga para el
+histórico) y **reserva 70 peticiones para el flujo de las 08:00** mientras
+no haya corrido (`/status` no gasta cuota). Lo que no quepa hoy se trae en
+la siguiente pasada de la tarea "liquidar" (cada 2 h).
+
+**3. Histórico al día.** El espejo de Kaggle se publica una vez al mes
+(última: 05/09). Simulando 19 días de retraso sobre 6,900 partidos, tiros y
+faltas — los mejores mercados — perdían ~0.5-1 punto de acierto. Las
+estadísticas traídas en el punto 2 se suman al CSV
+([count_stats_overlay.py](backend/ml/features/count_stats_overlay.py)),
+pero **solo si la API cuenta igual que football-data**: con ≥ 20 partidos,
+el total medio de la API debe estar a ±12% (o 3 errores estándar) del
+CSV en las mismas ligas. Si no, esa estadística no se mezcla. Hoy, con
+12-15 partidos, no se mezcla ninguna: se activará sola al tener muestra.
+
+**Emparejamiento de nombres.** [TeamResolver](backend/ml/features/count_stats.py):
+alias, exacto, sin forma jurídica ("1. FC Magdeburg" → "Magdeburg") y
+difuso conservador, con **guarda de país** (un "Nacional" uruguayo no hereda
+al portugués; un "Barcelona SC" ecuatoriano no hereda al Barcelona; las
+ligas femeninas no heredan al equipo masculino). Cobertura en las ligas
+principales cubiertas: de 210/268 a **398/398** equipos, sumando las ligas
+reconciliadas con FiveThirtyEight — cuyo "país" era la etiqueta de la
+fuente y requirió un mapa propio. De paso apareció un alias roto desde el
+inicio: el PSV nunca tuvo predicción de conteos.
+
+**Casa del usuario.** `ALLOWED_BOOKMAKERS` en `backend/.env` (ej.
+`Betano,1xBet`) limita la cuota del pick a las casas donde se puede apostar:
+el EV solo existe en la casa que da esa cuota, y Bet365 está bloqueada en
+Colombia. La probabilidad sin margen sigue usando todas las casas.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
@@ -1067,8 +1122,12 @@ que sí la tienen.
 - BTTS y Over/Under de goles: no generan picks porque el backtest con cuotas
   reales dio yield negativo. Solo entrarían con datos que el mercado no
   pondere bien (alineaciones, xG en vivo).
-- CLV por mercado (tiros / tarjetas / faltas por separado) en `/performance`,
-  para saber cuál de los mercados nuevos aguanta contra la casa.
+- Cuando "Modelo vs casa" tenga veredicto en tiros/tarjetas/faltas: si la
+  casa acierta más, bloquear ese mercado; si hay empate, mezclar la
+  probabilidad del modelo con la de la casa (el peso se ajusta con esas
+  mismas evaluaciones) en vez de apostar la del modelo sola.
+- Reglas de tarjetas por casa: unas cuentan solo amarillas, otras "puntos".
+  Elegir la cuota más alta entre casas puede elegir otra regla (EV fantasma).
 - Migraciones Alembic; hoy son `ALTER TABLE` a mano y `schema.sql` puede
   divergir de la BD real.
 - `elo_history` / `teams.elo_rating` nunca se escriben: el Elo se recalcula

@@ -9,12 +9,14 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.database import get_db
 from app.models import Match, Prediction
-from app.models import BacktestResult, Odds
+from app.models import BacktestResult, MarketEvaluation, Odds
 from app.schemas import (
     DailyCandidateResponse,
     MarketRow,
     MatchMarketsResponse,
     MatchSummary,
+    ModelVsMarketFamily,
+    ModelVsMarketResponse,
     OutcomeProbs,
     PerformanceResponse,
     PickOfTheDayResponse,
@@ -26,6 +28,7 @@ from ml.value_betting.ev_kelly import expected_value as ev_of
 from ml.simulation.monte_carlo import compare_with, simulate_match
 from ml.value_betting.confidence import SkillEvidence, confidence_label
 from ml.value_betting.ev_kelly import closing_line_value
+from ml.value_betting.model_vs_market import EvaluationRow, compare, market_family
 from ml.value_betting.settlement import COUNT_MARKET_STATS
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
@@ -355,6 +358,41 @@ def get_match_markets(
         home_history=diagnostics.get("home_history", 0), away_history=diagnostics.get("away_history", 0),
         rows=rows,
     )
+
+
+@router.get("/model-vs-market", response_model=ModelVsMarketResponse)
+def get_model_vs_market(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """¿El modelo predice mejor que la casa? Compara, sobre TODOS los mercados
+    evaluados y liquidados (no solo los picks), el error del modelo con el de
+    la probabilidad de las casas sin margen. Es la prueba que el backtest
+    contra la tasa base no puede dar. Ver ml/value_betting/model_vs_market.py."""
+    evaluated = db.execute(select(func.count(MarketEvaluation.id))).scalar_one()
+    settled_rows = db.execute(
+        select(MarketEvaluation).where(MarketEvaluation.is_win.isnot(None))
+    ).scalars().all()
+
+    comparisons = compare([
+        EvaluationRow(e.match_id, e.market, float(e.model_probability), float(e.market_fair_probability), bool(e.is_win))
+        for e in settled_rows if e.market_fair_probability is not None
+    ])
+
+    value: dict[str, list[float]] = {}
+    for e in settled_rows:
+        ev, odds = float(e.expected_value), float(e.best_odds)
+        if (e.validation == "VALIDADO" and settings.min_pick_ev <= ev <= settings.max_plausible_ev
+                and settings.odds_min <= odds <= settings.odds_max):
+            value.setdefault(market_family(e.market), []).append(odds - 1 if e.is_win else -1.0)
+
+    families = []
+    for c in comparisons:
+        pnl = value.get(c.family, [])
+        families.append(ModelVsMarketFamily(
+            family=c.family, n_matches=c.n_matches, n_markets=c.n_markets,
+            brier_model=round(c.brier_model, 4), brier_market=round(c.brier_market, 4),
+            t_stat=round(c.t_stat, 2) if c.t_stat is not None else None, verdict=c.verdict,
+            value_bets=len(pnl), value_bets_won=sum(1 for x in pnl if x > 0), value_bets_pnl=round(sum(pnl), 2),
+        ))
+    return ModelVsMarketResponse(evaluated=evaluated, settled=len(settled_rows), families=families)
 
 
 @router.get("/performance", response_model=PerformanceResponse)

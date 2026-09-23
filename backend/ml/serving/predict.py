@@ -26,7 +26,8 @@ from sqlalchemy import distinct, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Match
-from ml.features.count_stats import MODELS_DIR, CountStatModels
+from ml.features.count_stats import MODELS_DIR, CountStatModels, competition_country
+from ml.features.count_stats_overlay import load_overlay_raw
 from ml.features.elo import elo_win_draw_loss_probs, update_elo
 from ml.features.form import MatchResult, build_form_features
 from ml.features.poisson_xg import expected_goals, extended_market_probabilities, market_probabilities, team_strengths
@@ -90,6 +91,21 @@ class TrainedModels:
         # son tasas rodantes + Poisson + calibración sobre el CSV de
         # football-data.co.uk (ver ml/features/count_stats.py).
         self.count_stats = CountStatModels()
+        self.count_overlay_loaded = False
+
+    # El complemento del histórico (partidos recientes traídos de la API) cambia
+    # cada vez que la liquidación trae estadísticas; el servidor de la API vive
+    # días, así que se recarga cada tanto. El job diario es un proceso nuevo.
+    COUNT_OVERLAY_MAX_AGE_HOURS = 6
+
+    def ensure_count_overlay(self, db: Session) -> None:
+        if self.count_overlay_loaded and self.count_stats.age_hours() < self.COUNT_OVERLAY_MAX_AGE_HOURS:
+            return
+        self.count_stats.build(load_overlay_raw(db, self.count_stats.resolver))
+        self.count_overlay_loaded = True
+        for key, report in self.count_stats.overlay_report.items():
+            state = "en uso" if report.get("used") else f"NO usado: {report.get('reason')}"
+            print(f"[histórico] complemento de {key}: {report.get('n', 0)} partidos, {state}")
 
 
 def _replay_league_state(past_matches: list[Match], target_league_id: int | None = None) -> dict:
@@ -279,11 +295,15 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
     # equipos tienen historial suficiente en la fuente. Si no, simplemente no
     # hay claves de ese mercado y el job no lo apuesta (sin datos no se
     # apuesta). Salen ya calibradas (models/<stat>_calibration.joblib).
+    # `country` (el de la liga) es la guarda del emparejamiento de nombres con
+    # el histórico: un "Nacional" uruguayo no hereda al Nacional portugués.
+    models.ensure_count_overlay(db)
+    country = competition_country(match.league.name, match.league.country) if match.league else None
     count_probs = models.count_stats.market_probabilities(
-        match.home_team.name, match.away_team.name, match.kickoff_utc
+        match.home_team.name, match.away_team.name, match.kickoff_utc, country
     )
     expected_totals = models.count_stats.expected_totals(
-        match.home_team.name, match.away_team.name, match.kickoff_utc
+        match.home_team.name, match.away_team.name, match.kickoff_utc, country
     )
 
     return {
