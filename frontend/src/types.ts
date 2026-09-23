@@ -27,6 +27,8 @@ export interface PickOfTheDay {
   /** Total real de la estadística del mercado de conteo (córners, tiros...). */
   actual_stat: number | null
   closing_odds: number | null
+  /** Cuota mínima a la que el pick sigue valiendo la pena, en cualquier casa. */
+  min_odds: number | null
 }
 
 export interface DailyCandidate extends PickOfTheDay {

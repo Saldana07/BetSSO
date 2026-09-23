@@ -26,6 +26,10 @@ class PickOfTheDayResponse(BaseModel):
     historical_skill: float | None
     backtest_n_bets: int | None
     confidence_label: str  # 'ALTA' | 'MEDIA' | 'BAJA', ver ml/value_betting/confidence.py
+    # Cuota mínima a la que el pick sigue teniendo el EV mínimo exigido, en
+    # CUALQUIER casa (Rushbet no está en la fuente de cuotas: el usuario
+    # compara esta cifra con lo que le pagan allí).
+    min_odds: float | None = None
     # Resultado, si el partido ya se jugó y el pick se liquidó (vista "Ayer").
     is_settled: bool = False
     is_win: bool | None = None

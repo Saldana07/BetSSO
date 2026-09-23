@@ -547,12 +547,13 @@ class CountStatModel:
         return over_under_probabilities(lambda_home + lambda_away, self.spec)
 
     def market_probabilities(self, home_team: str, away_team: str, as_of: date | datetime,
-                             country: str | None = None) -> dict[str, float] | None:
-        """Probabilidades por línea, calibradas si hay calibrador. None si falta historial."""
+                             country: str | None = None, scale: float = 1.0) -> dict[str, float] | None:
+        """Probabilidades por línea, calibradas si hay calibrador. None si falta historial.
+        `scale` multiplica el total esperado (factor árbitro en tarjetas)."""
         exp = self.expected_values(home_team, away_team, as_of, country)
         if exp is None:
             return None
-        return apply_calibration(self.raw_probabilities(*exp), self.calibrators, self.spec)
+        return apply_calibration(over_under_probabilities(sum(exp) * scale, self.spec), self.calibrators, self.spec)
 
 
 def total_cdf(total_lambda: float, dispersion: float) -> np.ndarray:
@@ -604,6 +605,10 @@ class CountStatModels:
         self.build(overlay_raw)
 
     def build(self, overlay_raw: pd.DataFrame | None) -> None:
+        from ml.features.referees import RefereeFactors  # evita import circular
+
+        # None si no hay tabla o si su validación no fue significativa.
+        self.referees = RefereeFactors.load()
         self.overlay_report: dict[str, dict] = {}
         models = {}
         for spec in self.specs:
@@ -621,20 +626,31 @@ class CountStatModels:
     def age_hours(self) -> float:
         return (time.monotonic() - self.built_at) / 3600
 
+    def _scale(self, key: str, model: "CountStatModel", home_team: str, away_team: str, as_of,
+               country: str | None, referee: str | None) -> float:
+        """Factor árbitro: solo tarjetas (en faltas no mejoró) y solo si la tabla
+        pasó su validación (ml/training/build_referee_factors.py)."""
+        if key != "cards" or self.referees is None or not referee:
+            return 1.0
+        exp = model.expected_values(home_team, away_team, as_of, country)
+        return self.referees.factor(country, referee, sum(exp)) if exp else 1.0
+
     def market_probabilities(self, home_team: str, away_team: str, as_of: date | datetime,
-                             country: str | None = None) -> dict[str, float]:
+                             country: str | None = None, referee: str | None = None) -> dict[str, float]:
         out: dict[str, float] = {}
-        for model in self.models.values():
-            probs = model.market_probabilities(home_team, away_team, as_of, country)
+        for key, model in self.models.items():
+            scale = self._scale(key, model, home_team, away_team, as_of, country, referee)
+            probs = model.market_probabilities(home_team, away_team, as_of, country, scale)
             if probs:
                 out.update(probs)
         return out
 
     def expected_totals(self, home_team: str, away_team: str, as_of: date | datetime,
-                        country: str | None = None) -> dict[str, float | None]:
+                        country: str | None = None, referee: str | None = None) -> dict[str, float | None]:
         """Total esperado por estadística (para diagnósticos / UI)."""
         out = {}
         for key, model in self.models.items():
             exp = model.expected_values(home_team, away_team, as_of, country)
-            out[key] = sum(exp) if exp else None
+            scale = self._scale(key, model, home_team, away_team, as_of, country, referee)
+            out[key] = sum(exp) * scale if exp else None
         return out

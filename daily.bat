@@ -54,6 +54,11 @@ docker compose -f ..\docker-compose.yml up -d db >nul 2>&1
 :wait_db
 docker compose -f ..\docker-compose.yml exec -T db pg_isready -U bet_user -d bet_db >nul 2>&1 || (timeout /t 2 /nobreak >nul & goto wait_db)
 
+REM Arbitros 2022-2024 para el factor de tarjetas: una sola vez, se completa en 2-3 dias.
+REM No es fatal: si falla, el resto del flujo sigue.
+echo [0/8] Historico de arbitros (solo lo que falte)...
+%PY% -m ml.ingestion.import_referees
+
 echo [1/8] Trayendo resultado + estadisticas de partidos jugados (picks, mercados evaluados, historico)...
 %PY% -m jobs.fetch_match_data || goto :fail
 

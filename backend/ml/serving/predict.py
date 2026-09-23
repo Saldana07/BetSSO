@@ -299,11 +299,12 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
     # el histórico: un "Nacional" uruguayo no hereda al Nacional portugués.
     models.ensure_count_overlay(db)
     country = competition_country(match.league.name, match.league.country) if match.league else None
+    # El árbitro (si la API ya lo publicó) ajusta las tarjetas: ver ml/features/referees.py.
     count_probs = models.count_stats.market_probabilities(
-        match.home_team.name, match.away_team.name, match.kickoff_utc, country
+        match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee
     )
     expected_totals = models.count_stats.expected_totals(
-        match.home_team.name, match.away_team.name, match.kickoff_utc, country
+        match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee
     )
 
     return {

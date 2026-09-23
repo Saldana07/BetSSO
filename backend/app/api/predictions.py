@@ -88,6 +88,10 @@ def _to_response(pred: Prediction, cls=PickOfTheDayResponse):
         historical_accuracy=float(pred.historical_accuracy) if pred.historical_accuracy is not None else None,
         historical_skill=float(pred.historical_skill) if pred.historical_skill is not None else None,
         backtest_n_bets=pred.backtest_n_bets,
+        min_odds=(
+            round((1 + get_settings().min_pick_ev) / float(pred.model_probability), 2)
+            if float(pred.model_probability) > 0 else None
+        ),
         is_settled=pred.settled_at is not None,
         is_win=pred.is_win,
         profit_loss=float(pred.profit_loss) if pred.profit_loss is not None else None,

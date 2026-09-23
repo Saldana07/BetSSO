@@ -1112,6 +1112,49 @@ inicio: el PSV nunca tuvo predicción de conteos.
 el EV solo existe en la casa que da esa cuota, y Bet365 está bloqueada en
 Colombia. La probabilidad sin margen sigue usando todas las casas.
 
+## Casas del usuario y nuevos datos: el árbitro (23/09)
+
+**Casas.** El usuario apuesta en Betano, Bwin y Rushbet. En API-Football,
+Betano aparece en casi todos los partidos; Bwin está en su catálogo pero no
+dio cuotas en ninguno de los 96 partidos sincronizados; Rushbet no está.
+`ALLOWED_BOOKMAKERS=Betano,Bwin` en `backend/.env`. Para Rushbet (y Bwin),
+cada pick muestra **"vale la pena desde X"** = (1 + EV mínimo) / prob. del
+modelo: si esa casa paga X o más, la apuesta vale lo mismo.
+
+**Árbitro para tarjetas** ([referees.py](backend/ml/features/referees.py)).
+Nuestro histórico no trae árbitro; API-Football sí, a 1 petición por liga y
+temporada (plan gratuito: 2022-2024). Piloto con Premier, LaLiga y Serie A
+(3,327 partidos cruzados con el CSV, factor de cada árbitro calculado solo
+con sus partidos anteriores, test en 2024-25):
+
+| | Brier sin árbitro | con árbitro |
+|---|---|---|
+| Tarjetas 3.5 | 0.2272 | 0.2242 |
+| Tarjetas 4.5 | 0.2368 | 0.2333 |
+| Faltas 25.5 | 0.2101 | 0.2106 |
+
+Mejora las 5 líneas de tarjetas (+1.2-1.4 pts de acierto en 3.5 y 4.5) —
+2-3 veces más que Dixon-Coles, Binomial Negativa o Holt-Winters — y no
+aporta en faltas, así que solo se aplica a tarjetas. Pero el test pareado
+por partido dio **t = −1.8**, por debajo del umbral de −2, así que
+[build_referee_factors.py](backend/ml/training/build_referee_factors.py)
+guardó la tabla **sin activarla**. [import_referees.py](backend/ml/ingestion/import_referees.py)
+baja las 22 divisiones × 3 temporadas (66 peticiones, dentro del
+presupuesto de cuota: 2-3 días) y revalida cada vez; con ~7 veces más
+partidos de prueba se activará sola si el efecto es real. El árbitro de los
+partidos próximos se actualiza al resincronizar (se designa 1-3 días antes).
+
+**Fuentes de datos evaluadas y descartadas por ahora:**
+- Más temporadas del mismo tipo: ya hay 122k partidos; el límite no es
+  el volumen sino la información que la casa no tiene.
+- xG (Understat/FBref): serviría a los mercados de goles, que están
+  bloqueados porque la casa acierta más; FBref además prohíbe el scraping.
+- Alineaciones: la API las da ~1 h antes del partido (el flujo corre a las
+  08:00) y modelar el impacto de cada jugador es un proyecto aparte.
+- Plan de pago de API-Football: la palanca más grande (temporada en curso
+  por liga, 20 partidos por petición, miles de peticiones al día, más
+  ligas con estadísticas, lesiones). Decisión del usuario.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

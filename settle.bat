@@ -28,6 +28,9 @@ REM daily.bat / start.bat): esta tarea corre cada 2 h y no debe abrir ventanas.
 docker info >nul 2>&1 || goto :nodocker
 docker compose -f ..\docker-compose.yml exec -T db pg_isready -U bet_user -d bet_db >nul 2>&1 || goto :nodocker
 
+REM Arbitros 2022-2024 (solo lo que falte; no es fatal).
+%PY% -m ml.ingestion.import_referees
+
 echo [1/2] Trayendo resultado + estadisticas de partidos jugados (con presupuesto de cuota)...
 %PY% -m jobs.fetch_match_data || goto :fail
 

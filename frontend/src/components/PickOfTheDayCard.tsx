@@ -96,6 +96,11 @@ export function PickOfTheDayCard({
           {pick.bookmaker && (
             <p className="text-xs text-slate-400 dark:text-slate-500">en {pick.bookmaker}</p>
           )}
+          {pick.min_odds !== null && !pick.is_settled && (
+            <p className="text-xs text-slate-400 dark:text-slate-500" title="Si en tu casa (Rushbet, Bwin...) pagan esto o más, la apuesta vale lo mismo.">
+              vale la pena desde {pick.min_odds.toFixed(2)} en cualquier casa
+            </p>
+          )}
         </div>
 
         <div>

@@ -70,6 +70,10 @@ def upsert_match(db: Session, fixture_payload: dict) -> Match:
     else:
         match.status = status
         match.kickoff_utc = kickoff_utc
+        # El árbitro se designa 1-3 días antes: el partido suele crearse sin él
+        # y llega en una sincronización posterior (factor árbitro de tarjetas).
+        if fixture.get("referee"):
+            match.referee = fixture["referee"]
 
     match.home_goals = goals.get("home")
     match.away_goals = goals.get("away")
