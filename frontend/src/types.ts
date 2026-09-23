@@ -190,3 +190,14 @@ export interface ModelVsMarket {
   settled: number
   families: ModelVsMarketFamily[]
 }
+
+/** Apartado de la app: Europa (modelo validado) o fútbol colombiano (contador propio). */
+export type Scope = 'europa' | 'colombia'
+
+export interface ColombiaStatus {
+  matches: number
+  matches_with_stats: number
+  teams_ready: number
+  teams_total: number
+  import_requests_left: number
+}

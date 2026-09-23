@@ -37,7 +37,13 @@ def evaluate_match(
     evidence_for_market: Callable[[str], SkillEvidence],
     settings: Settings,
     now: datetime,
+    model_version: str | None = None,
+    require_validation: bool = True,
 ) -> MatchEvaluation:
+    """`model_version`: la de Europa por defecto; Colombia usa la suya.
+    `require_validation=False` solo para los picks EXPERIMENTALES de Colombia
+    (sin backtest propio todavía; su contador aparte es su validación)."""
+    model_version = model_version or settings.model_version
     evaluations: list[MarketEvaluation] = []
     candidates: list[Prediction] = []
 
@@ -71,7 +77,7 @@ def evaluate_match(
 
             evaluations.append(MarketEvaluation(
                 match_id=match.id,
-                model_version=settings.model_version,
+                model_version=model_version,
                 market=market,
                 selection=selection,
                 model_probability=model_prob,
@@ -93,12 +99,13 @@ def evaluate_match(
                 min_ev=settings.min_pick_ev,
                 min_historical_skill=settings.min_historical_skill,
                 max_ev=settings.max_plausible_ev,
+                require_validation=require_validation,
             ):
                 continue
 
             candidates.append(Prediction(
                 match_id=match.id,
-                model_version=settings.model_version,
+                model_version=model_version,
                 market=market,
                 selection=selection,
                 model_probability=model_prob,

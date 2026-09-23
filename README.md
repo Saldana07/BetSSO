@@ -1197,6 +1197,44 @@ Dixon-Coles con ρ de libro (empeora), cuotas del mercado en tiros/faltas/
 córners (ruido), xG para goles (mercado bloqueado porque la casa acierta
 más), alineaciones (llegan 1 h antes del partido).
 
+## Apartado de fútbol colombiano (contador propio)
+
+Petición del usuario: fútbol colombiano en un apartado aparte, con su propio
+contador, para sacar conclusiones solo de Colombia.
+
+**Fuente (gratis).** Se buscaron alternativas: webs de estadísticas
+(MakeYourStats, OddAlerts, AiScore) cuyas condiciones no permiten descarga
+automática, y APIs gratuitas como Highlightly (100 consultas/día, requiere
+cuenta del usuario). La mejor sigue siendo API-Football, la que ya usamos:
+Primera A (239) y Primera B (240) con resultado, árbitro y estadísticas por
+partido, y cuotas de 9 casas **incluida Betano** en córners, tarjetas, goles y
+ganador (no hay mercados de tiros ni faltas para Colombia).
+
+**Historial con el plan gratis** ([import_colombia.py](backend/ml/ingestion/import_colombia.py)):
+- 2022-2024: una petición por liga y temporada (6);
+- 2025-2026: el plan no deja pedir esas temporadas, pero sí el historial de
+  enfrentamientos (`/fixtures/headtohead`), que trae todas: una petición por
+  pareja de equipos de la Primera A actual (~190) cubre todos sus partidos;
+- estadísticas: una petición por partido, de lo más reciente hacia atrás
+  (prioridad 3 de jobs/fetch_match_data.py, después de picks y evaluaciones).
+Todo dentro del presupuesto diario; se completa solo en 1-2 semanas.
+
+**Separación.** Todo lo colombiano lleva `model_version = "col-v1"`
+(picks, evaluaciones, validaciones); la API filtra por `scope=europa|colombia`
+en picks, candidatos, partidos, rendimiento y "Modelo vs casa". Los picks
+colombianos (máx. 3/día) ya no ocupan cupos de los 5 de Europa, y los
+contadores de Europa no incluyen Colombia.
+
+**Modelo** ([colombia.py](backend/ml/features/colombia.py)). El mismo modelo
+de conteos, entrenado solo con partidos colombianos de la BD (córners y
+tarjetas; necesita 10+ partidos con estadísticas por equipo), sin los
+ajustes validados en Europa (árbitro, cuotas). Goles: el modelo general con
+el historial colombiano. **Sin validación propia todavía**: sus picks salen
+como experimentales (`require_validation=False`) y la app lo avisa. Su
+contador y su "Modelo vs casa" son precisamente la validación. Cuando haya
+muestra: calibrar y validar con datos colombianos y exigir validación como en
+Europa.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

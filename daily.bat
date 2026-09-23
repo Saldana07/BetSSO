@@ -60,6 +60,8 @@ echo [0/8] Datos gratuitos: copias de football-data en archive.org y arbitros (s
 REM Temporada en curso al dia (misma fuente que el historico) + arbitros. No fatal.
 %PY% -m ml.ingestion.import_football_data_archive
 %PY% -m ml.ingestion.import_referees
+REM Futbol colombiano: temporadas 2022-2024 + enfrentamientos 2025-2026 (apartado aparte). No fatal.
+%PY% -m ml.ingestion.import_colombia
 
 echo [1/8] Trayendo resultado + estadisticas de partidos jugados (picks, mercados evaluados, historico)...
 %PY% -m jobs.fetch_match_data || goto :fail

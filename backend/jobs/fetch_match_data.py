@@ -9,8 +9,11 @@ de las 100 peticiones diarias. Por eso hay prioridades y presupuesto:
   1. partidos con picks sin liquidar (lo que el usuario ve en "Ayer/Hoy");
   2. partidos con mercados evaluados sin liquidar (para medir el modelo
      contra la casa: ver MarketEvaluation);
-  3. partidos recientes de las ligas cubiertas por el histórico (completan
-     el CSV, que se actualiza una vez al mes: ver count_stats_overlay.py).
+  3. historial colombiano (Primera A y B), de lo más reciente hacia atrás:
+     el modelo propio de Colombia (ml/features/colombia.py) solo aprende de
+     partidos con estadísticas;
+  4. partidos recientes de las ligas cubiertas por el histórico (completan
+     el CSV entre copias del archivo: ver count_stats_overlay.py).
 
 Presupuesto: la cuota se reinicia a las 00:00 UTC y el flujo diario la
 necesita a las 13:00 UTC (08:00 en Colombia). Mientras el flujo de hoy no
@@ -33,6 +36,7 @@ from app.models import League, MarketEvaluation, Match, Prediction
 from ml.features.count_stats import (
     COVERED_COUNTRIES, DIVISION_COUNTRY, SPI_SOURCE_TAG, competition_country, default_resolver,
 )
+from ml.features.colombia import COLOMBIA_DIVISIONS
 from ml.ingestion.api_football_client import APIFootballClient, APIFootballError
 from ml.ingestion.mappers import upsert_match
 
@@ -84,7 +88,14 @@ def candidate_matches(db: Session, now: datetime) -> list[tuple[int, Match]]:
         .order_by(Match.kickoff_utc)
     ).scalars().all()
 
-    # Prioridad 3: partidos de liga de las divisiones del histórico (ambos
+    # Prioridad 3: historial colombiano, lo más reciente primero.
+    colombia = db.execute(
+        select(Match).join(League, Match.league_id == League.id)
+        .where(pending, League.api_league_id.in_(COLOMBIA_DIVISIONS))
+        .order_by(Match.kickoff_utc.desc())
+    ).scalars().all()
+
+    # Prioridad 4: partidos de liga de las divisiones del histórico (ambos
     # equipos emparejados, misma división actual, del país de la liga).
     resolver = default_resolver()
     tier3 = []
@@ -104,7 +115,7 @@ def candidate_matches(db: Session, now: datetime) -> list[tuple[int, Match]]:
 
     seen: set[int] = set()
     out: list[tuple[int, Match]] = []
-    for tier, matches in ((1, tier1), (2, tier2), (3, tier3)):
+    for tier, matches in ((1, tier1), (2, tier2), (3, colombia), (4, tier3)):
         for m in matches:
             if m.id not in seen:
                 seen.add(m.id)
@@ -149,7 +160,7 @@ def fetch_match(client: APIFootballClient, db: Session, match: Match, now: datet
 def fetch_finished_match_data(db: Session, max_requests: int | None = None) -> dict:
     now = datetime.now(timezone.utc)
     candidates = candidate_matches(db, now)
-    summary = {"candidates": len(candidates), "fetched": 0, "with_stats": 0, "by_tier": {1: 0, 2: 0, 3: 0}, "budget": 0}
+    summary = {"candidates": len(candidates), "fetched": 0, "with_stats": 0, "by_tier": {1: 0, 2: 0, 3: 0, 4: 0}, "budget": 0}
     if not candidates:
         return summary
 
@@ -182,7 +193,7 @@ def main():
         return
     t = s["by_tier"]
     print(f"Partidos pendientes: {s['candidates']} | presupuesto de API: {s['budget']} | "
-          f"traídos: {s['fetched']} (picks {t[1]}, mercados evaluados {t[2]}, histórico {t[3]}), "
+          f"traídos: {s['fetched']} (picks {t[1]}, mercados evaluados {t[2]}, Colombia {t[3]}, histórico {t[4]}), "
           f"con estadísticas: {s['with_stats']}")
     if s["fetched"] < s["candidates"]:
         print(f"Quedan {s['candidates'] - s['fetched']} para las próximas corridas (cuota de API).")

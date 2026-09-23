@@ -24,6 +24,7 @@ from app.database import SessionLocal
 from app.models import MarketEvaluation, Match, Odds
 from jobs.generate_daily_pick import MARKETS, _skill_evidence
 from jobs.market_evaluation import evaluate_match
+from ml.features.colombia import is_colombian
 from ml.serving.predict import DEFAULT_MODEL_DIR, TrainedModels, predict_match_probabilities
 
 settings = get_settings()
@@ -68,10 +69,10 @@ def main():
         models = TrainedModels(DEFAULT_MODEL_DIR, settings.model_version)
         cache: dict = {}
 
-        def evidence_for(market):
-            if market not in cache:
-                cache[market] = _skill_evidence(db, market)
-            return cache[market]
+        def evidence_for(market, version):
+            if (version, market) not in cache:
+                cache[(version, market)] = _skill_evidence(db, market, version)
+            return cache[(version, market)]
 
         total = skipped = 0
         for match in matches:
@@ -83,9 +84,11 @@ def main():
             result = evaluate_match(
                 match, probabilities, MARKETS,
                 odds_for_market=lambda market, m=match: odds_before_kickoff(db, m, market),
-                evidence_for_market=evidence_for,
+                evidence_for_market=lambda market, v=(settings.colombia_model_version if is_colombian(match)
+                                                     else settings.model_version): evidence_for(market, v),
                 settings=settings,
                 now=now,
+                model_version=settings.colombia_model_version if is_colombian(match) else settings.model_version,
             )
             db.add_all(result.evaluations)
             db.commit()

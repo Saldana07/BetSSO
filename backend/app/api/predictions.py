@@ -9,11 +9,12 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.database import get_db
 from app.models import Match, Prediction
-from app.models import BacktestResult, MarketEvaluation, Odds
+from app.models import BacktestResult, League, MarketEvaluation, Odds
 from app.schemas import (
     DailyCandidateResponse,
     MarketRow,
     MatchMarketsResponse,
+    ColombiaStatus,
     MatchSummary,
     ModelVsMarketFamily,
     ModelVsMarketResponse,
@@ -28,6 +29,7 @@ from ml.value_betting.ev_kelly import expected_value as ev_of
 from ml.simulation.monte_carlo import compare_with, simulate_match
 from ml.value_betting.confidence import SkillEvidence, confidence_label
 from ml.value_betting.ev_kelly import closing_line_value
+from ml.features.colombia import is_colombian
 from ml.value_betting.model_vs_market import EvaluationRow, compare, market_family
 from ml.value_betting.settlement import COUNT_MARKET_STATS
 
@@ -52,6 +54,16 @@ def _day_bounds(day: date | None = None, tz: str | None = None):
         day = datetime.now(zone).date()
     start = datetime(day.year, day.month, day.day, tzinfo=zone).astimezone(timezone.utc)
     return start, start + timedelta(days=1)
+
+
+Scope = Literal["europa", "colombia"]
+# Dos apartados con contadores separados: el fútbol colombiano tiene su propio
+# modelo y su propia versión (settings.colombia_model_version).
+_SCOPE_QUERY = Query(default="europa", description="europa (modelo validado) o colombia (apartado aparte).")
+
+
+def _version(scope: str, settings: Settings) -> str:
+    return settings.colombia_model_version if scope == "colombia" else settings.model_version
 
 
 _DAY_QUERY = Query(default=None, description="Día a consultar (YYYY-MM-DD) en la zona `tz`. Por defecto hoy.")
@@ -126,6 +138,7 @@ def get_top_picks(
     ),
     day: date | None = _DAY_QUERY,
     tz: str | None = _TZ_QUERY,
+    scope: Scope = _SCOPE_QUERY,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
@@ -145,6 +158,7 @@ def get_top_picks(
         .join(Match, Prediction.match_id == Match.id)
         .where(
             Prediction.is_pick_of_day.is_(True),
+            Prediction.model_version == _version(scope, settings),
             Match.kickoff_utc >= today_start,
             Match.kickoff_utc < today_end,
         )
@@ -239,7 +253,8 @@ def get_simulation(
 
 
 @router.get("/matches/today", response_model=list[MatchSummary])
-def get_todays_matches(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, db: Session = Depends(get_db)):
+def get_todays_matches(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, scope: Scope = _SCOPE_QUERY,
+                       db: Session = Depends(get_db)):
     """Partidos del día (hoy por defecto) que tienen cuotas sincronizadas —
     es decir, los que pasaron el filtro de historial suficiente (sync_odds
     solo pide cuotas de esos). Son los partidos que se pueden analizar
@@ -263,6 +278,7 @@ def get_todays_matches(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY
             .where(Match.kickoff_utc >= start, Match.kickoff_utc < end)
         ).scalars().all()
     )
+    rows = [(m, n) for m, n in rows if is_colombian(m) == (scope == "colombia")]
     return [
         MatchSummary(
             match_id=m.id, home_team=m.home_team.name, away_team=m.away_team.name,
@@ -311,8 +327,9 @@ def get_match_markets(
 
     # Evidencia de habilidad por mercado (fila más reciente de backtest_results).
     evidence: dict[str, BacktestResult] = {}
+    version = settings.colombia_model_version if is_colombian(match) else settings.model_version
     for row in db.execute(
-        select(BacktestResult).where(BacktestResult.model_version == settings.model_version)
+        select(BacktestResult).where(BacktestResult.model_version == version)
         .order_by(BacktestResult.created_at.desc())
     ).scalars().all():
         evidence.setdefault(row.market, row)
@@ -364,15 +381,53 @@ def get_match_markets(
     )
 
 
+@router.get("/colombia/status", response_model=ColombiaStatus)
+def get_colombia_status(db: Session = Depends(get_db)):
+    """Progreso del historial colombiano (se completa solo con la cuota gratuita)."""
+    import itertools
+    from collections import Counter
+
+    from ml.features.colombia import COLOMBIA_DIVISIONS
+    from ml.ingestion import import_colombia
+
+    rows = db.execute(
+        select(Match.home_team_id, Match.away_team_id, Match.home_corners.isnot(None))
+        .join(League, Match.league_id == League.id)
+        .where(League.api_league_id.in_(COLOMBIA_DIVISIONS), Match.status == "FINISHED")
+    ).all()
+    with_stats = Counter()
+    teams = set()
+    for h, a, has_stats in rows:
+        teams |= {h, a}
+        if has_stats:
+            with_stats[h] += 1
+            with_stats[a] += 1
+    state = import_colombia._state()
+    n_teams = len(import_colombia._current_primera_a_teams(db))
+    pairs_total = n_teams * (n_teams - 1) // 2
+    seasons_left = len(import_colombia.COLOMBIA_LEAGUES) * len(import_colombia.FREE_PLAN_SEASONS) - len(state["seasons"])
+    return ColombiaStatus(
+        matches=len(rows),
+        matches_with_stats=sum(1 for *_, st in rows if st),
+        teams_ready=sum(1 for n in with_stats.values() if n >= 10),
+        teams_total=len(teams),
+        import_requests_left=max(0, seasons_left) + max(0, pairs_total - len(state["pairs"])),
+    )
+
+
 @router.get("/model-vs-market", response_model=ModelVsMarketResponse)
-def get_model_vs_market(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+def get_model_vs_market(scope: Scope = _SCOPE_QUERY, db: Session = Depends(get_db),
+                        settings: Settings = Depends(get_settings)):
     """¿El modelo predice mejor que la casa? Compara, sobre TODOS los mercados
     evaluados y liquidados (no solo los picks), el error del modelo con el de
     la probabilidad de las casas sin margen. Es la prueba que el backtest
     contra la tasa base no puede dar. Ver ml/value_betting/model_vs_market.py."""
-    evaluated = db.execute(select(func.count(MarketEvaluation.id))).scalar_one()
+    version = _version(scope, settings)
+    evaluated = db.execute(
+        select(func.count(MarketEvaluation.id)).where(MarketEvaluation.model_version == version)
+    ).scalar_one()
     settled_rows = db.execute(
-        select(MarketEvaluation).where(MarketEvaluation.is_win.isnot(None))
+        select(MarketEvaluation).where(MarketEvaluation.is_win.isnot(None), MarketEvaluation.model_version == version)
     ).scalars().all()
 
     comparisons = compare([
@@ -383,7 +438,7 @@ def get_model_vs_market(db: Session = Depends(get_db), settings: Settings = Depe
     value: dict[str, list[float]] = {}
     for e in settled_rows:
         ev, odds = float(e.expected_value), float(e.best_odds)
-        if (e.validation == "VALIDADO" and settings.min_pick_ev <= ev <= settings.max_plausible_ev
+        if ((e.validation == "VALIDADO" or scope == "colombia") and settings.min_pick_ev <= ev <= settings.max_plausible_ev
                 and settings.odds_min <= odds <= settings.odds_max):
             value.setdefault(market_family(e.market), []).append(odds - 1 if e.is_win else -1.0)
 
@@ -400,7 +455,8 @@ def get_model_vs_market(db: Session = Depends(get_db), settings: Settings = Depe
 
 
 @router.get("/performance", response_model=PerformanceResponse)
-def get_performance(db: Session = Depends(get_db)):
+def get_performance(scope: Scope = _SCOPE_QUERY, db: Session = Depends(get_db),
+                    settings: Settings = Depends(get_settings)):
     """Desempeño REAL de los picks recomendados que ya se liquidaron.
 
     A diferencia del backtest (que simula el pasado), esto mide lo que de
@@ -412,20 +468,23 @@ def get_performance(db: Session = Depends(get_db)):
             func.count(Prediction.id),
             func.count(Prediction.id).filter(Prediction.is_win.is_(True)),
             func.coalesce(func.sum(Prediction.profit_loss), 0),
-        ).where(Prediction.is_pick_of_day.is_(True), Prediction.settled_at.isnot(None))
+        ).where(Prediction.is_pick_of_day.is_(True), Prediction.settled_at.isnot(None),
+                Prediction.model_version == _version(scope, settings))
     ).one()
 
     total, wins, pnl = settled[0], settled[1], float(settled[2])
 
     pending = db.execute(
         select(func.count(Prediction.id)).where(
-            Prediction.is_pick_of_day.is_(True), Prediction.settled_at.is_(None)
+            Prediction.is_pick_of_day.is_(True), Prediction.settled_at.is_(None),
+            Prediction.model_version == _version(scope, settings),
         )
     ).scalar_one()
 
     clv_rows = db.execute(
         select(Prediction.bookmaker_odds, Prediction.closing_odds).where(
-            Prediction.is_pick_of_day.is_(True), Prediction.closing_odds.isnot(None)
+            Prediction.is_pick_of_day.is_(True), Prediction.closing_odds.isnot(None),
+            Prediction.model_version == _version(scope, settings),
         )
     ).all()
     clvs = [closing_line_value(float(taken), float(closing)) for taken, closing in clv_rows]
@@ -452,6 +511,7 @@ def get_daily_candidates(
     ),
     day: date | None = _DAY_QUERY,
     tz: str | None = _TZ_QUERY,
+    scope: Scope = _SCOPE_QUERY,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
@@ -464,6 +524,7 @@ def get_daily_candidates(
         select(Prediction)
         .join(Match, Prediction.match_id == Match.id)
         .where(
+            Prediction.model_version == _version(scope, settings),
             Prediction.bookmaker_odds >= settings.odds_min,
             Prediction.bookmaker_odds <= settings.odds_max,
             Prediction.expected_value >= settings.min_pick_ev,

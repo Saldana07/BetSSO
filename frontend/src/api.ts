@@ -2,10 +2,12 @@ import type {
   ConfidenceLevel,
   DailyCandidate,
   MatchMarkets,
+  ColombiaStatus,
   MatchSummary,
   ModelVsMarket,
   Performance,
   PickOfTheDay,
+  Scope,
   Simulation,
 } from './types'
 
@@ -49,30 +51,34 @@ function withParams(path: string, params: Record<string, string | undefined>): s
   return qs ? `${path}?${qs}` : path
 }
 
-export function getTopPicks(minConfidence?: ConfidenceLevel, day?: string): Promise<PickOfTheDay[]> {
-  return getJson<PickOfTheDay[]>(withParams('/api/predictions/top-picks', { min_confidence: minConfidence, day, tz: LOCAL_TZ }))
+export function getTopPicks(minConfidence?: ConfidenceLevel, day?: string, scope: Scope = 'europa'): Promise<PickOfTheDay[]> {
+  return getJson<PickOfTheDay[]>(withParams('/api/predictions/top-picks', { min_confidence: minConfidence, day, tz: LOCAL_TZ, scope }))
 }
 
-export function getDailyCandidates(minConfidence?: ConfidenceLevel, day?: string): Promise<DailyCandidate[]> {
-  return getJson<DailyCandidate[]>(withParams('/api/predictions/daily-candidates', { min_confidence: minConfidence, day, tz: LOCAL_TZ }))
+export function getDailyCandidates(minConfidence?: ConfidenceLevel, day?: string, scope: Scope = 'europa'): Promise<DailyCandidate[]> {
+  return getJson<DailyCandidate[]>(withParams('/api/predictions/daily-candidates', { min_confidence: minConfidence, day, tz: LOCAL_TZ, scope }))
 }
 
-export function getPerformance(): Promise<Performance> {
-  return getJson<Performance>('/api/predictions/performance')
+export function getPerformance(scope: Scope = 'europa'): Promise<Performance> {
+  return getJson<Performance>(withParams('/api/predictions/performance', { scope }))
+}
+
+export function getColombiaStatus(): Promise<ColombiaStatus> {
+  return getJson<ColombiaStatus>('/api/predictions/colombia/status')
 }
 
 export function getSimulation(matchId: number): Promise<Simulation> {
   return getJson<Simulation>(`/api/predictions/${matchId}/simulation`)
 }
 
-export function getTodaysMatches(day?: string): Promise<MatchSummary[]> {
-  return getJson<MatchSummary[]>(withParams('/api/predictions/matches/today', { day, tz: LOCAL_TZ }))
+export function getTodaysMatches(day?: string, scope: Scope = 'europa'): Promise<MatchSummary[]> {
+  return getJson<MatchSummary[]>(withParams('/api/predictions/matches/today', { day, tz: LOCAL_TZ, scope }))
 }
 
 export function getMatchMarkets(matchId: number): Promise<MatchMarkets> {
   return getJson<MatchMarkets>(`/api/predictions/${matchId}/markets`)
 }
 
-export function getModelVsMarket(): Promise<ModelVsMarket> {
-  return getJson<ModelVsMarket>('/api/predictions/model-vs-market')
+export function getModelVsMarket(scope: Scope = 'europa'): Promise<ModelVsMarket> {
+  return getJson<ModelVsMarket>(withParams('/api/predictions/model-vs-market', { scope }))
 }

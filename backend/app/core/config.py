@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # rechazaba la línea de córners con MÁS habilidad.
     min_historical_skill: float = 0.0
     model_version: str = "v1"
+    # Fútbol colombiano: modelo, picks, evaluaciones y contadores propios
+    # (apartado aparte en la app; no suma a los contadores de Europa).
+    colombia_model_version: str = "col-v1"
+    colombia_top_picks_count: int = 3
     top_picks_count: int = 5  # cuántos "picks del día" se muestran (top N por EV, máx. 1 por partido)
 
     # --- Guardas de suficiencia de datos (ver README: "apostar a ciegas") ---

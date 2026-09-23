@@ -168,3 +168,14 @@ class ModelVsMarketResponse(BaseModel):
     evaluated: int              # mercados evaluados guardados (liquidados o no)
     settled: int
     families: list[ModelVsMarketFamily]
+
+
+class ColombiaStatus(BaseModel):
+    """Cuánto historial colombiano hay: el modelo propio de Colombia solo
+    predice córners y tarjetas de equipos con 10+ partidos con estadísticas."""
+
+    matches: int                    # partidos terminados de Primera A y B en la BD
+    matches_with_stats: int
+    teams_ready: int                # equipos con 10+ partidos con estadísticas
+    teams_total: int
+    import_requests_left: int       # peticiones pendientes para completar el historial

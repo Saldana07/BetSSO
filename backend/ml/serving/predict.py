@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Match, Odds
 from ml.features.count_stats import MODELS_DIR, CountStatModels, competition_country
+from ml.features.colombia import ColombiaCountModels, is_colombian, load_colombia_frame
 from ml.features.count_stats_overlay import load_overlay_raw
 from ml.features.elo import elo_win_draw_loss_probs, update_elo
 from ml.features.form import MatchResult, build_form_features
@@ -102,6 +103,8 @@ class TrainedModels:
         if self.count_overlay_loaded and self.count_stats.age_hours() < self.COUNT_OVERLAY_MAX_AGE_HOURS:
             return
         self.count_stats.build(load_overlay_raw(db, self.count_stats.resolver))
+        # Colombia: modelo propio con los partidos colombianos de la BD.
+        self.colombia_counts = ColombiaCountModels(load_colombia_frame(db))
         self.count_overlay_loaded = True
         for key, report in self.count_stats.overlay_report.items():
             state = "en uso" if report.get("used") else f"NO usado: {report.get('reason')}"
@@ -320,16 +323,25 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
     # `country` (el de la liga) es la guarda del emparejamiento de nombres con
     # el histórico: un "Nacional" uruguayo no hereda al Nacional portugués.
     models.ensure_count_overlay(db)
-    country = competition_country(match.league.name, match.league.country) if match.league else None
-    # El árbitro (si la API ya lo publicó) y el desequilibrio del mercado 1X2
-    # ajustan las tarjetas: ver ml/features/referees.py y market_adjustment.py.
-    p_home, p_away = _market_1x2(db, match)
-    count_probs = models.count_stats.market_probabilities(
-        match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee, p_home, p_away
-    )
-    expected_totals = models.count_stats.expected_totals(
-        match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee, p_home, p_away
-    )
+    if is_colombian(match):
+        # Fútbol colombiano: modelo propio, sin los ajustes validados en Europa
+        # (cuotas, árbitro): su validación es su propio contador.
+        count_probs = models.colombia_counts.market_probabilities(
+            match.home_team.name, match.away_team.name, match.kickoff_utc)
+        expected_totals = models.colombia_counts.expected_totals(
+            match.home_team.name, match.away_team.name, match.kickoff_utc)
+        expected_totals.setdefault("corners", None)
+    else:
+        country = competition_country(match.league.name, match.league.country) if match.league else None
+        # El árbitro (si la API ya lo publicó) y el desequilibrio del mercado 1X2
+        # ajustan las tarjetas: ver ml/features/referees.py y market_adjustment.py.
+        p_home, p_away = _market_1x2(db, match)
+        count_probs = models.count_stats.market_probabilities(
+            match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee, p_home, p_away
+        )
+        expected_totals = models.count_stats.expected_totals(
+            match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee, p_home, p_away
+        )
 
     return {
         **goals_market_probs,

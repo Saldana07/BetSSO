@@ -1,5 +1,15 @@
 import { useEffect, useState } from 'react'
-import { ApiError, getDailyCandidates, getMatchMarkets, getModelVsMarket, getPerformance, getTodaysMatches, getTopPicks, localDay } from './api'
+import {
+  ApiError,
+  getColombiaStatus,
+  getDailyCandidates,
+  getMatchMarkets,
+  getModelVsMarket,
+  getPerformance,
+  getTodaysMatches,
+  getTopPicks,
+  localDay,
+} from './api'
 import { CandidateRow } from './components/CandidateRow'
 import { ConfidenceFilter } from './components/ConfidenceFilter'
 import { DaySelector, dayLabel, type DayOffset } from './components/DaySelector'
@@ -7,7 +17,17 @@ import { MatchDetail, type MatchRef } from './components/MatchDetail'
 import { ModelVsMarket } from './components/ModelVsMarket'
 import { PerformanceBar } from './components/PerformanceBar'
 import { PickOfTheDayCard } from './components/PickOfTheDayCard'
-import type { ConfidenceLevel, DailyCandidate, MatchSummary, ModelVsMarket as ModelVsMarketData, Performance, PickOfTheDay } from './types'
+import { ColombiaBanner, SectionSelector } from './components/SectionSelector'
+import type {
+  ColombiaStatus,
+  ConfidenceLevel,
+  DailyCandidate,
+  MatchSummary,
+  ModelVsMarket as ModelVsMarketData,
+  Performance,
+  PickOfTheDay,
+  Scope,
+} from './types'
 
 type PicksState =
   | { status: 'loading' }
@@ -18,6 +38,8 @@ type PicksState =
 type Selected = { match: MatchRef; pick?: PickOfTheDay }
 
 function App() {
+  const [scope, setScope] = useState<Scope>(() => (new URLSearchParams(window.location.search).get('seccion') === 'colombia' ? 'colombia' : 'europa'))
+  const [colombiaStatus, setColombiaStatus] = useState<ColombiaStatus | null>(null)
   const [minConfidence, setMinConfidence] = useState<ConfidenceLevel | null>(null)
   const [dayOffset, setDayOffset] = useState<DayOffset>(0)
   const [picksState, setPicksState] = useState<PicksState>({ status: 'loading' })
@@ -34,7 +56,7 @@ function App() {
   useEffect(() => {
     setPicksState({ status: 'loading' })
 
-    getTopPicks(minConfidence ?? undefined, day)
+    getTopPicks(minConfidence ?? undefined, day, scope)
       .then((picks) => setPicksState({ status: 'ready', picks }))
       .catch((err) => {
         if (err instanceof ApiError && err.status === 404) {
@@ -44,22 +66,36 @@ function App() {
         }
       })
 
-    getDailyCandidates(minConfidence ?? undefined, day)
+    getDailyCandidates(minConfidence ?? undefined, day, scope)
       .then(setCandidates)
       .catch(() => setCandidates([]))
 
-    getPerformance()
+    getPerformance(scope)
       .then(setPerformance)
       .catch(() => setPerformance(null))
 
-    getModelVsMarket()
+    getModelVsMarket(scope)
       .then(setModelVsMarket)
       .catch(() => setModelVsMarket(null))
 
-    getTodaysMatches(day)
+    if (scope === 'colombia') {
+      getColombiaStatus()
+        .then(setColombiaStatus)
+        .catch(() => setColombiaStatus(null))
+    }
+
+    getTodaysMatches(day, scope)
       .then(setMatches)
       .catch(() => setMatches([]))
-  }, [refreshKey, minConfidence, day])
+  }, [refreshKey, minConfidence, day, scope])
+
+  const changeScope = (next: Scope) => {
+    setScope(next)
+    const url = new URL(window.location.href)
+    if (next === 'colombia') url.searchParams.set('seccion', 'colombia')
+    else url.searchParams.delete('seccion')
+    window.history.replaceState(null, '', url)
+  }
 
   // Refresco automático: la liquidación corre cada 2 h en segundo plano y los
   // picks de mañana se regeneran por la mañana; sin esto había que pulsar
@@ -106,6 +142,10 @@ function App() {
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-8">
+        <div className="mb-6">
+          <SectionSelector value={scope} onChange={changeScope} />
+        </div>
+        {scope === 'colombia' && <ColombiaBanner status={colombiaStatus} />}
         {performance && (
           <div className="mb-6">
             <PerformanceBar performance={performance} />
@@ -120,7 +160,7 @@ function App() {
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Picks de {when}
+              {scope === 'colombia' ? 'Picks Colombia' : 'Picks'} de {when}
             </h2>
             <DaySelector value={dayOffset} onChange={setDayOffset} />
           </div>
@@ -156,7 +196,11 @@ function App() {
         {picksState.status === 'empty' && (
           <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center dark:border-slate-700 dark:bg-slate-900">
             <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-              {minConfidence ? `No hay picks con confianza ${minConfidence.toLowerCase()} o mayor ${when}` : `No hay apuesta segura ${when}`}
+              {minConfidence
+                ? `No hay picks con confianza ${minConfidence.toLowerCase()} o mayor ${when}`
+                : scope === 'colombia'
+                  ? `No hay picks colombianos ${when}`
+                  : `No hay apuesta segura ${when}`}
             </p>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               {minConfidence

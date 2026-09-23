@@ -30,6 +30,8 @@ docker compose -f ..\docker-compose.yml exec -T db pg_isready -U bet_user -d bet
 
 REM Arbitros 2022-2024 (solo lo que falte; no es fatal).
 %PY% -m ml.ingestion.import_referees
+REM Historial colombiano (apartado aparte; solo lo que falte, no es fatal).
+%PY% -m ml.ingestion.import_colombia
 
 echo [1/2] Trayendo resultado + estadisticas de partidos jugados (con presupuesto de cuota)...
 %PY% -m jobs.fetch_match_data || goto :fail
