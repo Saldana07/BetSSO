@@ -235,14 +235,17 @@ def main():
 
     models = TrainedModels(model_dir=DEFAULT_MODEL_DIR, model_version=settings.model_version)
 
-    def model_probabilities_fn(match: Match) -> dict:
-        db = SessionLocal()
-        try:
-            return predict_match_probabilities(db, match, models)
-        finally:
-            db.close()
+    # Una sola sesión para todas las predicciones (antes se abría una
+    # conexión nueva por partido).
+    prediction_db = SessionLocal()
 
-    run(model_probabilities_fn, day)
+    def model_probabilities_fn(match: Match) -> dict:
+        return predict_match_probabilities(prediction_db, match, models)
+
+    try:
+        run(model_probabilities_fn, day)
+    finally:
+        prediction_db.close()
 
 
 if __name__ == "__main__":

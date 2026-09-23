@@ -335,12 +335,17 @@ def predict_match_probabilities(db: Session, match: Match, models: TrainedModels
         country = competition_country(match.league.name, match.league.country) if match.league else None
         # El árbitro (si la API ya lo publicó) y el desequilibrio del mercado 1X2
         # ajustan las tarjetas: ver ml/features/referees.py y market_adjustment.py.
-        p_home, p_away = _market_1x2(db, match)
+        # OJO: nombres propios. Antes se reutilizaba `p_home, p_away` y eso pisaba
+        # las probabilidades del clasificador: el 1X2 del "modelo" pasaba a ser
+        # el de la casa (o None -> caída si no había cuotas).
+        market_p_home, market_p_away = _market_1x2(db, match)
         count_probs = models.count_stats.market_probabilities(
-            match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee, p_home, p_away
+            match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee,
+            market_p_home, market_p_away,
         )
         expected_totals = models.count_stats.expected_totals(
-            match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee, p_home, p_away
+            match.home_team.name, match.away_team.name, match.kickoff_utc, country, match.referee,
+            market_p_home, market_p_away,
         )
 
     return {

@@ -14,10 +14,8 @@ Uso:
 """
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-
-from sqlalchemy import func
 
 from app.database import SessionLocal
 from app.models import MarketEvaluation, Match, Odds, Prediction

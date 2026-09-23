@@ -1235,6 +1235,29 @@ contador y su "Modelo vs casa" son precisamente la validación. Cuando haya
 muestra: calibrar y validar con datos colombianos y exigir validación como en
 Europa.
 
+## Revisión externa de código (23/09): un error real mío, lo demás verificado
+
+- **Crítico y real (introducido al añadir el ajuste de tarjetas por cuotas):**
+  en `predict_match_probabilities`, `p_home, p_away = _market_1x2(...)` pisaba
+  las probabilidades del clasificador. Sin cuotas 1X2 el endpoint caía
+  (`float(None)`); con cuotas, el 1X2 y el hándicap ±0.5 del "modelo" eran los
+  de la casa, lo que habría contaminado "Modelo vs casa". Corregido con
+  nombres propios. Se comprobó que **ninguna evaluación quedó contaminada**
+  (todas eran anteriores al error y el flujo no corrió en medio).
+- **Real:** el texto del Montecarlo decía "candidato a apuesta de valor… habilidad
+  de ~+1.8 pts" en 1X2; tras corregir la fuga de calibración esa cifra es ~0 y
+  la casa acierta más. Ahora remite a la evidencia sin cifras que caduquen.
+- **Real:** `.env.example` tenía una variable inexistente y le faltaban todas
+  las nuevas; ahora coincide exactamente con `Settings`. Una conexión a la BD
+  por partido en el job diario → una sola sesión. Imports duplicados.
+- **No aplica:** "faltan índices" (existen en `schema.sql`; la consulta de
+  cuotas tarda 0.45 ms con índice); "carrera entre fetch y settle" (ambos
+  corren bajo el mismo candado `.daily_lock`); CORS fijo (el navegador habla
+  con la API a través del proxy de Vite, mismo origen).
+- **Menores, sin cambio:** filtrar confianza en SQL (pocos picks por día),
+  `lru_cache` de settings (patrón estándar de FastAPI), tabla de lesiones sin
+  datos (el plan gratuito no las da; ya documentado).
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

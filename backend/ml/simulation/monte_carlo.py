@@ -182,8 +182,13 @@ def compare_with(sim: SimulationResult, classifier: dict[str, float], market_odd
         conclusion = (
             f"Ambos modelos superan al mercado en {labels[best['outcome']]}: mercado {best['market_fair'] * 100:.0f}% "
             f"(sin margen), Montecarlo {best['monte_carlo'] * 100:.0f}%, clasificador {best['classifier'] * 100:.0f}%. "
-            f"Ventaja mínima de {best['edge_min'] * 100:.1f} pts con los modelos de acuerdo: candidato a apuesta de valor. "
-            "Recuerda que la habilidad demostrada del modelo en 1X2 es de ~+1.8 pts, así que trátalo con cautela."
+            f"Ventaja mínima de {best['edge_min'] * 100:.1f} pts con los modelos de acuerdo. "
+            # Sin cifras fijas: un número de habilidad escrito aquí caduca en
+            # silencio (el "+1.8 pts" de antes dejó de ser cierto al corregir la
+            # fuga de la calibración). La evidencia vive en "Modelo vs casa".
+            "Pero en 1X2 el modelo no le gana a la casa (backtest con cuotas reales y tabla "
+            "\"Modelo vs casa\"): esta discrepancia es más probablemente error del modelo que valor. "
+            "Por eso el 1X2 no genera picks."
         )
     else:
         conclusion = (

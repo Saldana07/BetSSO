@@ -59,7 +59,11 @@ def test_valor_solo_cuando_ambos_modelos_superan_al_mercado():
     assert cmp.market_fair is not None
     assert sum(cmp.market_fair.values()) == pytest.approx(1.0)              # margen eliminado
     assert any(c["outcome"] == "HOME" for c in cmp.value_candidates)
-    assert "candidato a apuesta de valor" in cmp.conclusion
+    # Detecta la discrepancia, pero no la vende como valor: en 1X2 la casa
+    # acierta más que el modelo (y el texto no debe fijar cifras que caducan).
+    assert "Ambos modelos superan al mercado" in cmp.conclusion
+    assert "no le gana a la casa" in cmp.conclusion
+    assert "pts, así que" not in cmp.conclusion
 
 
 def test_sin_cuotas_no_se_evalua_valor():
