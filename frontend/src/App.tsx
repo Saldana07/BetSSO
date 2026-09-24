@@ -5,6 +5,7 @@ import {
   getDailyCandidates,
   getMatchMarkets,
   getModelVsMarket,
+  getNbaStatus,
   getPerformance,
   getTodaysMatches,
   getTopPicks,
@@ -16,6 +17,7 @@ import { DataPanel } from './components/DataPanel'
 import { DaySelector, dayLabel, type DayOffset } from './components/DaySelector'
 import { MatchDetail, type MatchRef } from './components/MatchDetail'
 import { ModelVsMarket } from './components/ModelVsMarket'
+import { NbaBanner } from './components/NbaBanner'
 import { PerformanceBar } from './components/PerformanceBar'
 import { PickOfTheDayCard } from './components/PickOfTheDayCard'
 import { ColombiaBanner, SectionSelector } from './components/SectionSelector'
@@ -25,6 +27,7 @@ import type {
   DailyCandidate,
   MatchSummary,
   ModelVsMarket as ModelVsMarketData,
+  NbaStatus,
   Performance,
   PickOfTheDay,
   Scope,
@@ -39,8 +42,12 @@ type PicksState =
 type Selected = { match: MatchRef; pick?: PickOfTheDay }
 
 function App() {
-  const [scope, setScope] = useState<Scope>(() => (new URLSearchParams(window.location.search).get('seccion') === 'colombia' ? 'colombia' : 'europa'))
+  const [scope, setScope] = useState<Scope>(() => {
+    const s = new URLSearchParams(window.location.search).get('seccion')
+    return s === 'colombia' || s === 'nba' ? s : 'europa'
+  })
   const [colombiaStatus, setColombiaStatus] = useState<ColombiaStatus | null>(null)
+  const [nbaStatus, setNbaStatus] = useState<NbaStatus | null>(null)
   const [minConfidence, setMinConfidence] = useState<ConfidenceLevel | null>(null)
   const [dayOffset, setDayOffset] = useState<DayOffset>(0)
   const [picksState, setPicksState] = useState<PicksState>({ status: 'loading' })
@@ -88,6 +95,11 @@ function App() {
         .then(setColombiaStatus)
         .catch(() => setColombiaStatus(null))
     }
+    if (scope === 'nba') {
+      getNbaStatus()
+        .then(setNbaStatus)
+        .catch(() => setNbaStatus(null))
+    }
 
     getTodaysMatches(day, scope)
       .then(setMatches)
@@ -97,8 +109,8 @@ function App() {
   const changeScope = (next: Scope) => {
     setScope(next)
     const url = new URL(window.location.href)
-    if (next === 'colombia') url.searchParams.set('seccion', 'colombia')
-    else url.searchParams.delete('seccion')
+    if (next === 'europa') url.searchParams.delete('seccion')
+    else url.searchParams.set('seccion', next)
     window.history.replaceState(null, '', url)
   }
 
@@ -133,7 +145,7 @@ function App() {
           <div>
             <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">⚽ Apuesta Segura</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Motor de predicciones de fútbol · cuota 1.50–2.00 · +EV
+              Motor de predicciones de fútbol y NBA · cuota 1.50–2.00 · +EV
             </p>
           </div>
           <button
@@ -148,12 +160,13 @@ function App() {
 
       <main className="mx-auto max-w-4xl px-4 py-8">
         <div className="mb-6">
-          <DataPanel onFinished={reload} />
+          <DataPanel scope={scope} onFinished={reload} />
         </div>
         <div className="mb-6">
           <SectionSelector value={scope} onChange={changeScope} />
         </div>
         {scope === 'colombia' && <ColombiaBanner status={colombiaStatus} />}
+        {scope === 'nba' && <NbaBanner status={nbaStatus} />}
         {performance && (
           <div className="mb-6">
             <PerformanceBar performance={performance} />
@@ -168,13 +181,19 @@ function App() {
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              {scope === 'colombia' ? 'Picks Colombia' : 'Picks'} de {when}
+              {scope === 'colombia' ? 'Picks Colombia' : scope === 'nba' ? 'Picks NBA' : 'Picks'} de {when}
             </h2>
             <DaySelector value={dayOffset} onChange={setDayOffset} />
           </div>
           <ConfidenceFilter value={minConfidence} onChange={setMinConfidence} />
         </div>
-        {dayOffset === 1 && (
+        {dayOffset === 1 && scope === 'nba' && (
+          <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
+            Adelanto con las líneas de ahora: se rehacen cada vez que se actualiza la NBA y pueden cambiar (las lesiones de
+            última hora mueven mucho las líneas en la NBA).
+          </p>
+        )}
+        {dayOffset === 1 && scope !== 'nba' && (
           <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
             Adelanto con las cuotas de ahora: se rehacen con cuotas frescas cuando abras la página mañana (o con «Refrescar
             cuotas» antes del partido) y pueden cambiar.
@@ -210,12 +229,16 @@ function App() {
                 ? `No hay picks con confianza ${minConfidence.toLowerCase()} o mayor ${when}`
                 : scope === 'colombia'
                   ? `No hay picks colombianos ${when}`
-                  : `No hay apuesta segura ${when}`}
+                  : scope === 'nba'
+                    ? `No hay picks de la NBA ${when}`
+                    : `No hay apuesta segura ${when}`}
             </p>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               {minConfidence
                 ? 'Prueba bajando el filtro de confianza, o vuelve más tarde cuando haya más mercados con backtest validado.'
-                : dayOffset === 1
+                : scope === 'nba'
+                  ? 'Un pick de la NBA necesita una cuota de Betano o Bwin que pague más de lo justo (con "Cuotas Betano / Pinnacle"). Si no hay, es que el mercado está bien puesto: en la NBA pasa casi siempre.'
+                  : dayOffset === 1
                   ? 'Las cuotas de mañana aún no están sincronizadas o ningún mercado validado tiene ventaja. Se traen con «Actualizar el día» (se hace sola al abrir la página tras renovarse la cuota).'
                   : `Ningún partido de ${when} tiene equipos con historial suficiente y una cuota con ventaja plausible. Es normal en días de pocos partidos: el sistema prefiere no recomendar antes que recomendar a ciegas.`}
             </p>
@@ -237,15 +260,16 @@ function App() {
 
         <div className="mt-8">
           <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Partidos de {when} con análisis
+            {scope === 'nba' ? `Partidos de la NBA de ${when}` : `Partidos de ${when} con análisis`}
           </h3>
           <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">
-            Partidos con historial suficiente y cuotas. Abre cualquiera para ver <em>todos</em> sus mercados evaluados,
+            {scope === 'nba' ? 'Todos los partidos del día; los que ya tienen líneas muestran sus mercados evaluados.' : 'Partidos con historial suficiente y cuotas.'} Abre cualquiera para ver <em>todos</em> sus mercados evaluados,
             ordenados de más a menos favorable — aunque no haya pasado el filtro estricto de picks.
           </p>
           {matches.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-              {dayOffset === 0 ? 'Hoy' : dayOffset === 1 ? 'Mañana' : 'Ayer'} no hay partidos con datos suficientes para analizar.
+              {dayOffset === 0 ? 'Hoy' : dayOffset === 1 ? 'Mañana' : 'Ayer'}{' '}
+              {scope === 'nba' ? 'no hay partidos de la NBA.' : 'no hay partidos con datos suficientes para analizar.'}
             </div>
           ) : (
             <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-700 dark:bg-slate-900">
@@ -304,7 +328,7 @@ function App() {
         )}
       </main>
 
-      {selected && <MatchDetail match={selected.match} pick={selected.pick} onClose={() => setSelected(null)} />}
+      {selected && <MatchDetail match={selected.match} pick={selected.pick} scope={scope} onClose={() => setSelected(null)} />}
     </div>
   )
 }

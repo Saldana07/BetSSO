@@ -20,8 +20,18 @@ function countStat(market: string): { prefix: string; name: string } | null {
   return null
 }
 
+/** Línea del local de un hándicap vista desde la selección: el visitante la
+ *  tiene con el signo invertido (local -5.5 = visitante +5.5). */
+function sideLine(homeLine: string, selection: string): string {
+  if (selection === 'HOME') return homeLine.startsWith('-') ? homeLine : `+${homeLine}`
+  return homeLine.startsWith('-') ? `+${homeLine.slice(1)}` : `-${homeLine}`
+}
+
 export function formatMarket(market: string): string {
   if (MARKET_LABELS[market]) return MARKET_LABELS[market]
+  // NBA
+  if (market.startsWith('SPREAD_')) return `Hándicap de puntos (local ${sideLine(line(market, 'SPREAD_'), 'HOME')})`
+  if (market.startsWith('TOTAL_')) return `Más/menos de ${line(market, 'TOTAL_')} puntos`
   const stat = countStat(market)
   if (stat) return `Más/menos de ${line(market, stat.prefix)} ${stat.name}`
   if (market.startsWith('TEAM_OU_HOME_')) return `Goles del local (línea ${line(market, 'TEAM_OU_HOME_')})`
@@ -46,6 +56,8 @@ export function formatSelection(market: string, selection: string): string {
     return `${SELECTION_LABELS[selection] ?? selection} ${shown}`
   }
   if (market === 'EXACT_SCORE') return selection.replace('-', ' – ')
+  if (market.startsWith('SPREAD_')) return `${SELECTION_LABELS[selection] ?? selection} ${sideLine(line(market, 'SPREAD_'), selection)}`
+  if (market.startsWith('TOTAL_')) return `${SELECTION_LABELS[selection] ?? selection} ${line(market, 'TOTAL_')} puntos`
   return SELECTION_LABELS[selection] ?? selection
 }
 

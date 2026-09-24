@@ -3,9 +3,10 @@ import type { ColombiaStatus, Scope } from '../types'
 const SECTIONS: { value: Scope; label: string }[] = [
   { value: 'europa', label: 'Europa' },
   { value: 'colombia', label: 'Fútbol colombiano' },
+  { value: 'nba', label: 'NBA' },
 ]
 
-/** Dos apartados con contadores separados: lo de Colombia no suma a Europa. */
+/** Apartados con contadores separados: Colombia y la NBA no suman a Europa. */
 export function SectionSelector({ value, onChange }: { value: Scope; onChange: (s: Scope) => void }) {
   return (
     <nav aria-label="Apartado" className="flex gap-1 border-b border-slate-200 dark:border-slate-800">

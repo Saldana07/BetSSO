@@ -206,3 +206,7 @@ CREATE TABLE IF NOT EXISTS market_evaluations (
     UNIQUE (match_id, model_version, market, selection)
 );
 CREATE INDEX IF NOT EXISTS ix_market_evaluations_match_id ON market_evaluations(match_id);
+
+-- Apartado NBA (nba_teams, nba_games, nba_odds, nba_predictions, nba_evaluations):
+-- las crea ml.nba.store.ensure_tables() desde los modelos de app/models.py la
+-- primera vez que corre el historial o la actualización de la NBA.

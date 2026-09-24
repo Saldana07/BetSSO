@@ -102,6 +102,33 @@ def bet_won(
         if selection == "AWAY":
             return not home_covers
 
+    elif market == "ML":
+        # NBA: ganador con prórroga incluida (no hay empate).
+        if home_goals == away_goals:
+            raise UnknownMarketError("ML sin ganador: el marcador final no puede ser empate")
+        if selection == "HOME":
+            return home_goals > away_goals
+        if selection == "AWAY":
+            return away_goals > home_goals
+
+    elif market.startswith(("SPREAD_", "TOTAL_")):
+        # NBA. SPREAD_<línea del local>: HOME cubre si local + línea > visitante.
+        # TOTAL_<línea>: puntos totales. Solo líneas .5 (sin devolución).
+        kind, _, line_str = market.partition("_")
+        line = float(line_str)
+        if line == int(line):
+            raise UnknownMarketError(f"{market} es línea entera: implica devolución y no se liquida")
+        if kind == "SPREAD":
+            home_covers = home_goals + line > away_goals
+            if selection == "HOME":
+                return home_covers
+            if selection == "AWAY":
+                return not home_covers
+        elif selection == "OVER":
+            return total_goals > line
+        elif selection == "UNDER":
+            return total_goals < line
+
     elif market == "EXACT_SCORE":
         # selection "2-1"
         h, a = selection.split("-")

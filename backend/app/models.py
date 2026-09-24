@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Numeric,
     SmallInteger,
@@ -259,3 +260,124 @@ class Injury(Base):
     status: Mapped[str] = mapped_column(String(20))
     impact_score: Mapped[int] = mapped_column(SmallInteger, default=1)
     expected_return: Mapped[Date | None] = mapped_column(Date)
+
+
+# --- NBA ------------------------------------------------------------------------
+# Tablas propias: el modelo de fútbol lee `matches` entera (promedios de goles,
+# Elo, historial por equipo) y 110 "goles" por equipo la romperían. Los picks y
+# las evaluaciones de la NBA repiten las columnas de Prediction y
+# MarketEvaluation para que la API y la página las traten igual.
+
+TZ = DateTime(timezone=True)   # TIMESTAMPTZ, como las tablas de fútbol (schema.sql)
+
+class NbaTeam(Base):
+    __tablename__ = "nba_teams"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)   # TEAM_ID de nba.com
+    abbreviation: Mapped[str] = mapped_column(String(5))
+    name: Mapped[str] = mapped_column(String(60))
+
+
+class NbaGame(Base):
+    __tablename__ = "nba_games"
+    __table_args__ = (CheckConstraint("home_team_id <> away_team_id"),)
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True)             # GAME_ID de nba.com
+    season: Mapped[str] = mapped_column(String(7), index=True)                 # "2024-25"
+    season_type: Mapped[str] = mapped_column(String(10))                       # REGULAR | PLAYIN | PLAYOFFS | PRESEASON | CUP
+    game_date: Mapped[date] = mapped_column(Date, index=True)                  # fecha local de EE. UU.
+    tipoff_utc: Mapped[datetime | None] = mapped_column(TZ, index=True)
+    home_team_id: Mapped[int] = mapped_column(ForeignKey("nba_teams.id"))
+    away_team_id: Mapped[int] = mapped_column(ForeignKey("nba_teams.id"))
+    status: Mapped[str] = mapped_column(String(12), default="SCHEDULED")       # SCHEDULED | LIVE | FINISHED | POSTPONED
+    home_pts: Mapped[int | None] = mapped_column(SmallInteger)
+    away_pts: Mapped[int | None] = mapped_column(SmallInteger)
+    # Para estimar las posesiones (FGA - OREB + TOV + 0.44·FTA).
+    home_fga: Mapped[int | None] = mapped_column(SmallInteger)
+    away_fga: Mapped[int | None] = mapped_column(SmallInteger)
+    home_fta: Mapped[int | None] = mapped_column(SmallInteger)
+    away_fta: Mapped[int | None] = mapped_column(SmallInteger)
+    home_oreb: Mapped[int | None] = mapped_column(SmallInteger)
+    away_oreb: Mapped[int | None] = mapped_column(SmallInteger)
+    home_tov: Mapped[int | None] = mapped_column(SmallInteger)
+    away_tov: Mapped[int | None] = mapped_column(SmallInteger)
+    espn_event_id: Mapped[str | None] = mapped_column(String(12))
+    espn_odds_fetched_at: Mapped[datetime | None] = mapped_column(TZ)
+    apisports_game_id: Mapped[int | None]
+
+    home_team: Mapped["NbaTeam"] = relationship(foreign_keys=[home_team_id])
+    away_team: Mapped["NbaTeam"] = relationship(foreign_keys=[away_team_id])
+
+
+class NbaOdds(Base):
+    """Cuotas en formato decimal. Mercados: ML (ganador con prórroga),
+    SPREAD_<línea del local> (HOME/AWAY) y TOTAL_<línea> (OVER/UNDER)."""
+    __tablename__ = "nba_odds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[str] = mapped_column(ForeignKey("nba_games.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(12))           # ESPN | APISPORTS
+    bookmaker: Mapped[str] = mapped_column(String(60))
+    market: Mapped[str] = mapped_column(String(30))
+    selection: Mapped[str] = mapped_column(String(10))
+    odds_value: Mapped[float] = mapped_column(Numeric(6, 3))
+    snapshot: Mapped[str] = mapped_column(String(8))          # OPEN | CLOSE | LIVE
+    recorded_at: Mapped[datetime] = mapped_column(TZ)
+
+
+class NbaPrediction(Base):
+    """Picks de la NBA (mismas columnas que Prediction)."""
+    __tablename__ = "nba_predictions"
+    __table_args__ = (UniqueConstraint("game_id", "model_version", "market", "selection"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[str] = mapped_column(ForeignKey("nba_games.id", ondelete="CASCADE"), index=True)
+    model_version: Mapped[str] = mapped_column(String(40))
+    market: Mapped[str] = mapped_column(String(30))
+    selection: Mapped[str] = mapped_column(String(20))
+    model_probability: Mapped[float] = mapped_column(Numeric(6, 4))
+    bookmaker: Mapped[str | None] = mapped_column(String(60))
+    bookmaker_odds: Mapped[float] = mapped_column(Numeric(6, 3))
+    implied_probability: Mapped[float] = mapped_column(Numeric(6, 4))
+    expected_value: Mapped[float] = mapped_column(Numeric(6, 4))
+    kelly_fraction: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    historical_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 4))
+    historical_skill: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    backtest_n_bets: Mapped[int | None]
+    is_pick_of_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    generated_at: Mapped[datetime] = mapped_column(TZ)
+    settled_at: Mapped[datetime | None] = mapped_column(TZ)
+    is_win: Mapped[bool | None]
+    profit_loss: Mapped[float | None] = mapped_column(Numeric(8, 3))
+    closing_odds: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    closing_bookmaker: Mapped[str | None] = mapped_column(String(60))
+
+    game: Mapped["NbaGame"] = relationship()
+
+
+class NbaEvaluation(Base):
+    """Todos los mercados evaluados de cada partido (mismas columnas que
+    MarketEvaluation): la medición "Modelo vs casa" del apartado NBA."""
+    __tablename__ = "nba_evaluations"
+    __table_args__ = (UniqueConstraint("game_id", "model_version", "market", "selection"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[str] = mapped_column(ForeignKey("nba_games.id", ondelete="CASCADE"), index=True)
+    model_version: Mapped[str] = mapped_column(String(40))
+    market: Mapped[str] = mapped_column(String(30))
+    selection: Mapped[str] = mapped_column(String(20))
+    model_probability: Mapped[float] = mapped_column(Numeric(6, 4))
+    market_fair_probability: Mapped[float | None] = mapped_column(Numeric(6, 4))
+    n_bookmakers: Mapped[int] = mapped_column(SmallInteger, default=0)
+    best_odds: Mapped[float] = mapped_column(Numeric(6, 3))
+    best_bookmaker: Mapped[str | None] = mapped_column(String(60))
+    expected_value: Mapped[float] = mapped_column(Numeric(8, 4))
+    validation: Mapped[str] = mapped_column(String(12))
+    evaluated_at: Mapped[datetime] = mapped_column(TZ)
+    settled_at: Mapped[datetime | None] = mapped_column(TZ)
+    is_win: Mapped[bool | None]
+
+    game: Mapped["NbaGame"] = relationship()
+
+
+NBA_TABLES = [NbaTeam.__table__, NbaGame.__table__, NbaOdds.__table__, NbaPrediction.__table__, NbaEvaluation.__table__]

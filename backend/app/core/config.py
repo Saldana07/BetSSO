@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # (apartado aparte en la app; no suma a los contadores de Europa).
     colombia_model_version: str = "col-v1"
     colombia_top_picks_count: int = 3
+    # NBA: tablas, modelo, picks y contadores propios (apartado aparte; no suma
+    # a los de fútbol). Ver ml/nba/.
+    nba_model_version: str = "nba-v1"
+    nba_top_picks_count: int = 3
     top_picks_count: int = 5  # cuántos "picks del día" se muestran (top N por EV, máx. 1 por partido)
 
     # --- Guardas de suficiencia de datos (ver README: "apostar a ciegas") ---

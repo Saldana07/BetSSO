@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { PickOfTheDay } from '../types'
+import type { PickOfTheDay, Scope } from '../types'
 import { MarketsTab } from './MarketsTab'
+import { NbaInjuries } from './NbaInjuries'
 import { PickOfTheDayCard } from './PickOfTheDayCard'
 import { SimulationTab } from './SimulationTab'
 
@@ -12,15 +13,16 @@ export interface MatchRef {
   kickoff_utc: string
 }
 
-type Tab = 'markets' | 'general' | 'simulation'
+type Tab = 'markets' | 'general' | 'simulation' | 'injuries'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'markets', label: 'Todos los mercados' },
   { id: 'general', label: 'Pick' },
   { id: 'simulation', label: 'Simulación Montecarlo' },
+  { id: 'injuries', label: 'Lesiones' },
 ]
 
-export function MatchDetail({ match, pick, onClose }: { match: MatchRef; pick?: PickOfTheDay; onClose: () => void }) {
+export function MatchDetail({ match, pick, scope = 'europa', onClose }: { match: MatchRef; pick?: PickOfTheDay; scope?: Scope; onClose: () => void }) {
   // Si el partido tiene un pick estricto, se abre en él; si no, en el análisis de mercados.
   const [tab, setTab] = useState<Tab>(pick ? 'general' : 'markets')
 
@@ -35,7 +37,10 @@ export function MatchDetail({ match, pick, onClose }: { match: MatchRef; pick?: 
     }
   }, [onClose])
 
-  const tabs = pick ? TABS : TABS.filter((t) => t.id !== 'general')
+  // La simulación de Montecarlo es del modelo de goles: en la NBA no aplica.
+  // Las lesiones (parte de ESPN) solo en la NBA.
+  const nba = scope === 'nba'
+  const tabs = TABS.filter((t) => (pick || t.id !== 'general') && (nba ? t.id !== 'simulation' : t.id !== 'injuries'))
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/60 p-4 pt-10 sm:pt-16" onClick={onClose}>
@@ -84,9 +89,10 @@ export function MatchDetail({ match, pick, onClose }: { match: MatchRef; pick?: 
         </div>
 
         <div className="p-5">
-          {tab === 'markets' && <MarketsTab matchId={match.match_id} />}
+          {tab === 'markets' && <MarketsTab matchId={match.match_id} scope={scope} />}
           {tab === 'general' && pick && <PickOfTheDayCard pick={pick} />}
           {tab === 'simulation' && <SimulationTab matchId={match.match_id} />}
+          {tab === 'injuries' && <NbaInjuries matchId={match.match_id} />}
         </div>
       </div>
     </div>

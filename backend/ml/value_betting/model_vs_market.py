@@ -19,6 +19,8 @@ T_THRESHOLD = 2.0
 FAMILIES = {
     "CORNERS_OU": "CORNERS", "SHOTS_OU": "SHOTS", "SOT_OU": "SOT", "CARDS_OU": "CARDS", "FOULS_OU": "FOULS",
     "1X2": "1X2", "BTTS": "BTTS", "OU": "GOALS_OU", "TEAM_OU": "GOALS_OU", "AH": "AH",
+    # NBA: ganador (con prórroga), hándicap de puntos y total de puntos.
+    "ML": "ML", "SPREAD": "SPREAD", "TOTAL": "TOTAL",
 }
 
 

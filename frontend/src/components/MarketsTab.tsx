@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, getMatchMarkets } from '../api'
-import { VALIDATION_LABELS, type MarketRow, type MatchMarkets, type Validation } from '../types'
+import { VALIDATION_LABELS, type MarketRow, type MatchMarkets, type Scope, type Validation } from '../types'
 import { formatMarket, formatSelection } from './MarketLabel'
 
 const pct = (v: number, d = 1) => `${(v * 100).toFixed(d)}%`
@@ -39,7 +39,7 @@ function EvCell({ row }: { row: MarketRow }) {
   )
 }
 
-export function MarketsTab({ matchId }: { matchId: number }) {
+export function MarketsTab({ matchId, scope = 'europa' }: { matchId: number; scope?: Scope }) {
   const [state, setState] = useState<
     { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; data: MatchMarkets }
   >({ status: 'loading' })
@@ -47,10 +47,10 @@ export function MarketsTab({ matchId }: { matchId: number }) {
 
   useEffect(() => {
     setState({ status: 'loading' })
-    getMatchMarkets(matchId)
+    getMatchMarkets(matchId, scope)
       .then((data) => setState({ status: 'ready', data }))
       .catch((err) => setState({ status: 'error', message: err instanceof ApiError ? err.message : 'No se pudieron cargar los mercados' }))
-  }, [matchId])
+  }, [matchId, scope])
 
   if (state.status === 'loading') return <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">Evaluando mercados...</p>
   if (state.status === 'error') return <p className="py-10 text-center text-sm text-red-600 dark:text-red-400">{state.message}</p>

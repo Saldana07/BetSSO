@@ -8,6 +8,9 @@ y settle.bat las lanzan a mano.
   cuotas      cuotas de los partidos de las próximas 12 h y sus picks (1 por partido)
   verificar   resultado + estadísticas de los partidos con picks y liquidación
   completar   medición modelo-vs-casa e historial, con lo que sobre (deja reserva)
+  nba         apartado NBA: calendario, resultados, líneas de ESPN, picks y liquidación
+              (gratis: nba.com y ESPN; se lanza sola al abrir la pestaña si pasaron 3 h)
+  nba_cuotas  lo mismo + cuotas de Betano/Pinnacle de la API de baloncesto (su propia cuota)
 
 Cada acción corre en su propio proceso (la API la lanza y responde al
 instante) con el candado .daily_lock, y deja su progreso en
@@ -30,7 +33,7 @@ from pathlib import Path
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
-from app.models import MarketEvaluation, Match, Odds, Prediction
+from app.models import MarketEvaluation, Match, NbaOdds, Odds, Prediction
 from jobs.fetch_match_data import (
     DAILY_MARKER, _pending_clause, candidate_matches, daily_flow_done, request_budget,
 )
@@ -59,7 +62,11 @@ TITLES = {
     "cuotas": f"Refrescar cuotas (próximas {DEFAULT_HOURS:g} h)",
     "verificar": "Verificar resultados de mis picks",
     "completar": "Completar datos con lo que sobre",
+    "nba": "Actualizar NBA",
+    "nba_cuotas": "Cuotas Betano/Pinnacle (NBA)",
 }
+NBA_ACTIONS = ("nba", "nba_cuotas")
+NBA_AUTO_EVERY = timedelta(hours=3)   # gratis, pero sin repetir en cada visita
 
 
 def steps_for(action: str, today: date) -> list[Step]:
@@ -94,6 +101,16 @@ def steps_for(action: str, today: date) -> list[Step]:
             Step("Árbitros", "ml.ingestion.import_referees", fatal=False),
             Step("Estadísticas del historial", "jobs.fetch_match_data", ("--tiers", "3,4")),
             Step("Liquidando lo que llegó", "jobs.settle_predictions"),
+        ]
+    if action in NBA_ACTIONS:
+        from ml.nba.train import PARAMS_PATH
+        train = [] if PARAMS_PATH.exists() else [
+            Step("Entrenando y validando el modelo NBA (solo la primera vez, ~15 min)", "ml.nba.train")]
+        return [
+            Step("Historial de la NBA (solo lo que falte)", "ml.nba.import_history", fatal=False),
+            *train,
+            Step("Calendario, resultados, líneas y picks" + (" con Betano/Pinnacle" if action == "nba_cuotas" else ""),
+                 "jobs.nba_update", ("--apisports",) if action == "nba_cuotas" else ()),
         ]
     raise ValueError(f"Acción desconocida: {action}")
 
@@ -188,6 +205,17 @@ def update_due(today: date) -> bool:
     de cuota (UTC), aunque haya fallado: reintentar en cada visita gastaría
     la cuota a ciegas."""
     return not daily_flow_done(today) and read_state().get("auto_attempted") != today.isoformat()
+
+
+def nba_update_due(now: datetime) -> bool:
+    """La actualización NBA gratuita toca al abrir la pestaña si la última
+    (manual o automática) terminó hace más de NBA_AUTO_EVERY."""
+    last = [(read_state().get("last") or {}).get(a, {}).get("finished_at") for a in NBA_ACTIONS]
+    last = [datetime.fromisoformat(t) for t in last if t]
+    attempted = read_state().get("nba_auto_attempted")
+    if attempted:
+        last.append(datetime.fromisoformat(attempted))
+    return not last or now - max(last) > NBA_AUTO_EVERY
 
 
 # --- Ejecución --------------------------------------------------------------------
@@ -285,7 +313,17 @@ def estimates(db: Session, now: datetime) -> dict:
             pending, exists().where(MarketEvaluation.match_id == Match.id, MarketEvaluation.settled_at.is_(None)))
     ).scalar_one()
 
+    from jobs.nba_update import APISPORTS_FRESH, DEFAULT_HOURS as NBA_HOURS, upcoming_games
+    nba_games = upcoming_games(db, now, NBA_HOURS)
+    nba_fresh = set(db.execute(select(NbaOdds.game_id).where(
+        NbaOdds.source == "APISPORTS", NbaOdds.recorded_at > now - APISPORTS_FRESH,
+        NbaOdds.game_id.in_([g.id for g in nba_games]))).scalars())
+    nba_todo = [g for g in nba_games if g.id not in nba_fresh]
+    nba_days = {g.tipoff_utc.date() for g in nba_todo if g.apisports_game_id is None}
+
     return {
+        "nba": {"requests": 0, "games": len(nba_games)},
+        "nba_cuotas": {"requests": len(nba_todo) + len(nba_days), "games": len(nba_games)},
         "actualizar": {"requests": 2 + odds_today_tomorrow, "approximate": True},
         "cuotas": {"requests": len(upcoming_needing_odds(db, now, DEFAULT_HOURS))},
         # Cada partido: 1 para resultado + estadísticas y 1 para la cuota de cierre.

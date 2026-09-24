@@ -179,3 +179,18 @@ class ColombiaStatus(BaseModel):
     teams_ready: int                # equipos con 10+ partidos con estadísticas
     teams_total: int
     import_requests_left: int       # peticiones pendientes para completar el historial
+
+
+class NbaStatus(BaseModel):
+    """Apartado NBA: datos disponibles, calendario y validación del modelo."""
+
+    games: int                              # partidos jugados en la BD (sin pretemporada)
+    first_season: str | None
+    last_season: str | None
+    games_with_closing_odds: int            # con líneas de cierre de ESPN (la vara de la validación)
+    next_game_utc: datetime | None
+    next_game: str | None
+    next_game_preseason: bool = False
+    regular_season_start_utc: datetime | None
+    regular_season_started: bool = False
+    validation: dict | None                 # models/nba/validation.json (ver ml/nba/train.py)

@@ -11,6 +11,9 @@ const FAMILY_LABELS: Record<string, string> = {
   GOALS_OU: 'Goles más/menos',
   BTTS: 'Ambos marcan',
   AH: 'Hándicap asiático',
+  ML: 'Ganador (NBA)',
+  SPREAD: 'Hándicap de puntos',
+  TOTAL: 'Total de puntos',
 }
 
 const VERDICTS: Record<string, { label: string; className: string }> = {

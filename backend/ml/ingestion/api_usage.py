@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 USAGE_PATH = Path(__file__).resolve().parents[2] / "data" / "api_usage.json"
+# La API de baloncesto (NBA) tiene su propia cuota de 100 diarias con la misma
+# clave: se cuenta aparte para no mezclarla con la de fútbol.
+BASKETBALL_USAGE_PATH = USAGE_PATH.with_name("api_usage_basketball.json")
 KEEP_DAYS = 14
 DAILY_LIMIT = 100   # plan gratuito; se renueva a las 00:00 UTC (19:00 en Colombia)
 
@@ -32,6 +35,8 @@ def purpose(endpoint: str, params: dict) -> str:
             return "temporada completa (historial / árbitros)"
     if endpoint == "/fixtures/statistics":
         return "estadísticas de un partido"
+    if endpoint == "/games":
+        return "partidos del día"
     return endpoint.strip("/") or "otro"
 
 
@@ -39,36 +44,37 @@ def _today() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _read() -> dict:
+def _read(path: Path | None = None) -> dict:
     try:
-        return json.loads(USAGE_PATH.read_text(encoding="utf-8"))
+        return json.loads((path or USAGE_PATH).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
 
-def record(endpoint: str, params: dict | None = None) -> None:
+def record(endpoint: str, params: dict | None = None, path: Path | None = None) -> None:
     """Anota una petición (las de /status no gastan cuota y no se anotan)."""
     if endpoint == "/status":
         return
-    data = _read()
+    path = path or USAGE_PATH
+    data = _read(path)
     day = data.setdefault(_today(), {})
     key = purpose(endpoint, params or {})
     day[key] = day.get(key, 0) + 1
     for old in sorted(data)[:-KEEP_DAYS]:
         del data[old]
     try:
-        USAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        USAGE_PATH.write_text(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass   # el registro nunca debe tumbar una petición
 
 
-def used_today() -> int:
-    return sum(_read().get(_today(), {}).values())
+def used_today(path: Path | None = None) -> int:
+    return sum(_read(path).get(_today(), {}).values())
 
 
-def breakdown(day: str | None = None) -> dict[str, int]:
-    return dict(sorted(_read().get(day or _today(), {}).items(), key=lambda kv: -kv[1]))
+def breakdown(day: str | None = None, path: Path | None = None) -> dict[str, int]:
+    return dict(sorted(_read(path).get(day or _today(), {}).items(), key=lambda kv: -kv[1]))
 
 
 def main():

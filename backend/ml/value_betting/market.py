@@ -27,8 +27,10 @@ def complete_selection_set(market: str) -> frozenset[str] | None:
         return frozenset({"HOME", "DRAW", "AWAY"})
     if market == "BTTS":
         return frozenset({"YES", "NO"})
-    if market.startswith("AH_"):
+    if market.startswith("AH_") or market == "ML" or market.startswith("SPREAD_"):
         return frozenset({"HOME", "AWAY"})
+    if market.startswith("TOTAL_"):
+        return frozenset({"OVER", "UNDER"})
     prefix, _, line = market.rpartition("_")
     if (prefix == "OU" or prefix.endswith("_OU") or prefix.startswith("TEAM_OU_")) and line.replace(".", "", 1).isdigit():
         return frozenset({"OVER", "UNDER"})

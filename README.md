@@ -1301,6 +1301,74 @@ cuota de cierre solo se pide para partidos de los últimos 4 días (antes un
 partido sin cuotas en la API se volvía a pedir en cada liquidación);
 `fetch_match_data --tiers` separa "tus picks" (sin reserva) del resto.
 
+## Apartado NBA
+
+Pestaña propia, con contador, "Modelo vs casa" y botones propios; nada de lo
+de la NBA suma a los contadores de fútbol. Tablas aparte (`nba_teams`,
+`nba_games`, `nba_odds`, `nba_predictions`, `nba_evaluations`): el modelo de
+fútbol lee `matches` entera y 110 "goles" por equipo le romperían los
+promedios. Los picks y evaluaciones repiten las columnas de fútbol para que la
+API (`/api/nba/...`) devuelva las mismas respuestas y la página use los mismos
+componentes.
+
+**Datos (todos gratis salvo lo marcado):**
+
+| Fuente | Qué da | Coste |
+|---|---|---|
+| stats.nba.com (`leaguegamelog`) | todos los partidos de una temporada con la estadística de cada equipo, 1 petición | gratis |
+| cdn.nba.com (`scheduleLeagueV2`) | calendario de la temporada en curso con hora UTC, estado y marcador | gratis |
+| ESPN (API pública de su web) | líneas de apertura y cierre de varias casas por partido desde 2017; líneas de los próximos partidos | gratis |
+| API-Basketball (API-Sports) | cuotas de Betano, Pinnacle, Bet365, 1xBet... de ayer/hoy/mañana | misma clave que fútbol, **100 diarias aparte** |
+
+nba.com rechaza peticiones sin cabeceras de navegador (403 o se cuelga):
+`ml/nba/sources.py` las manda. En API-Basketball el número del hándicap es
+**siempre la línea del local**, también en el lado "Away" (verificado con
+Betano: con el visitante favorito a 1.70, "Away +1.5" paga 1.80, así que es
+"visitante gana por 2+"), igual que en API-Football. El plan gratis no da
+temporadas fuera de 2022-2024 ni fechas fuera de ayer/hoy/mañana: sirve para
+las cuotas del día, no para el historial (el historial sale de nba.com y ESPN).
+
+**Modelo (`ml/nba/ratings.py`).** Ataque, defensa y ritmo de cada equipo en
+puntos por 100 posesiones, corregidos partido a partido (como un Elo de
+puntos), más ventaja de local (que deriva: en la burbuja de 2020 fue ~0) y
+castigo por back-to-back. Al empezar temporada los ratings se acercan a la
+media. Todos los partidos de un día se predicen antes de actualizar con
+cualquiera de ellos (test que lo verifica). Margen y total se tratan como
+normales; de ahí salen ganador, hándicap y total (`ml/nba/markets.py`), y al
+revés, de la probabilidad sin margen de una casa sale el margen o total que
+espera (así se comparan casas con líneas distintas; Pinnacle pesa más).
+
+**Validación (`ml/nba/train.py`), sin tocar lo que se evalúa:** parámetros
+ajustados con 2015-16 a 2020-21; el aporte del modelo sobre la línea de
+cierre (resultado - línea = w · (modelo - línea)) se mide en 2021-22 a
+2023-24 y se confirma en 2024-25 y 2025-26, con apuestas simuladas a las
+cuotas reales de cierre y de apertura de ESPN. En vivo, la probabilidad es
+línea del mercado + w · (modelo - línea): con w = 0 (el modelo no sabe nada
+que la línea no sepa), los picks solo nacen de diferencias de precio, Betano
+o Bwin pagando más de lo que el resto del mercado considera justo. El
+resultado queda en `models/nba/validation.json` y se muestra en la pestaña.
+
+**Resultado (24/09/2026, 6.591 partidos con línea de cierre):** el modelo
+**no le gana a la casa**. Error medio en el margen 10.97 puntos contra 10.56
+de la línea; en el total 14.69 contra 14.21; aporte sobre la línea w = -0.02
+(t = -0.3) y -0.06 (t = -0.9); en el ganador la casa predice mejor (Brier
+0.199 contra 0.208, t = 5.3). Apostando con el modelo solo en 2024-26:
+ROI -6.6% a cierre y -3.4% a apertura en ~3.000 apuestas. Por eso w = 0 en
+vivo. La compra de precio entre casas daría +6.3% (566 apuestas, 2021-24),
+pero las líneas más apartadas del consenso "ganan" aún más (+10.9%): la firma
+de líneas viejas en ESPN (cada casa se registra a su hora), así que queda
+marcada como no fiable y la decide el contador propio. Para no caer en lo
+mismo en vivo, los picks de hándicap y total solo van en líneas a menos de
+1.5 puntos de lo que espera el mercado, y el precio se compara con Pinnacle
+sin margen en esa misma línea (nunca con la propia casa).
+
+**Operación.** "Actualizar NBA" (gratis: calendario, resultados, líneas de
+ESPN, picks y liquidación) se lanza sola al abrir la pestaña si pasaron 3
+horas; "Cuotas Betano / Pinnacle" gasta la cuota de baloncesto (1 por día +
+1 por partido de las próximas 36 h, sin repetir los de menos de 2 horas). La
+primera vez importa el historial (~15.000 partidos y ~6.000 cierres de ESPN,
+reanudable) y entrena el modelo. La pretemporada no genera picks.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

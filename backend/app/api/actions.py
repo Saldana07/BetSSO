@@ -20,7 +20,7 @@ from ml.ingestion import api_usage
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
 
-Action = Literal["actualizar", "cuotas", "verificar", "completar"]
+Action = Literal["actualizar", "cuotas", "verificar", "completar", "nba", "nba_cuotas"]
 _launch_lock = threading.Lock()
 
 
@@ -34,9 +34,16 @@ def _status() -> dict:
             "breakdown": api_usage.breakdown(),
             "resets_at": datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=timezone.utc).isoformat(),
         },
+        # La API de baloncesto (NBA): misma clave, cuota aparte.
+        "quota_basketball": {
+            "used": api_usage.used_today(api_usage.BASKETBALL_USAGE_PATH),
+            "limit": api_usage.DAILY_LIMIT,
+            "breakdown": api_usage.breakdown(path=api_usage.BASKETBALL_USAGE_PATH),
+        },
         "running": on_demand.current_run(),
         "last": state.get("last") or {},
         "update_due": on_demand.update_due(now.date()),
+        "nba_update_due": on_demand.nba_update_due(now),
         "titles": on_demand.TITLES,
     }
 
@@ -58,15 +65,21 @@ def launch(action: Action, auto: bool = Query(False, description="Actualización
     with _launch_lock:
         today = datetime.now(timezone.utc).date()
         if auto:
-            if action != "actualizar":
-                raise HTTPException(400, "Solo la actualización del día se lanza sola.")
-            if not on_demand.update_due(today):
-                return {"started": False, "reason": "La actualización de hoy ya se hizo."}
+            if action == "actualizar":
+                if not on_demand.update_due(today):
+                    return {"started": False, "reason": "La actualización de hoy ya se hizo."}
+            elif action == "nba":
+                if not on_demand.nba_update_due(datetime.now(timezone.utc)):
+                    return {"started": False, "reason": "La NBA se actualizó hace menos de 3 horas."}
+            else:
+                raise HTTPException(400, "Solo la actualización del día y la de la NBA (gratis) se lanzan solas.")
         running = on_demand.current_run()
         if running or on_demand.lock_held():
             raise HTTPException(409, f"Ya está corriendo: {running['title'] if running else 'otra acción'}.")
-        if auto:
+        if auto and action == "actualizar":
             on_demand.update_state(auto_attempted=today.isoformat())
+        elif auto:
+            on_demand.update_state(nba_auto_attempted=datetime.now(timezone.utc).isoformat())
         proc = subprocess.Popen(
             [sys.executable, "-m", "jobs.on_demand", action], cwd=on_demand.BACKEND_DIR,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,

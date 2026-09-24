@@ -156,6 +156,7 @@ export const MARKET_LABELS: Record<string, string> = {
   'CORNERS_OU_8.5': 'Más/menos de 8.5 córners',
   'CORNERS_OU_9.5': 'Más/menos de 9.5 córners',
   EXACT_SCORE: 'Marcador exacto',
+  ML: 'Ganador (incluye prórroga)',
 }
 
 export const SELECTION_LABELS: Record<string, string> = {
@@ -192,7 +193,61 @@ export interface ModelVsMarket {
 }
 
 /** Apartado de la app: Europa (modelo validado) o fútbol colombiano (contador propio). */
-export type Scope = 'europa' | 'colombia'
+export type Scope = 'europa' | 'colombia' | 'nba'
+
+/** Apartado NBA: datos, calendario y la validación del modelo contra las líneas de cierre. */
+export interface NbaValidationPart {
+  mae_model: number
+  mae_market: number
+  w: number
+  t: number | null
+  test_rmse_market: number
+  test_rmse_blend: number
+  used_weight: number
+}
+
+export interface NbaBetSim {
+  bets: number
+  wins: number
+  profit: number
+  roi: number | null
+}
+
+export interface NbaValidation {
+  trained_at: string
+  fit_seasons: string[]
+  test_seasons: string[]
+  n_fit: number
+  n_test: number
+  margin: NbaValidationPart
+  total: NbaValidationPart
+  ml: { n: number; brier_model: number; brier_market: number; t: number | null }
+  betting: Record<'close' | 'open', { modelo_solo: NbaBetSim }>
+  /** La regla en vivo con w = 0 (comprar el precio de una casa que se aparta
+   *  de las demás), probada donde ESPN tiene 3+ casas. No fiable: ver `reason`. */
+  price_shopping: {
+    n_games: number
+    seasons: string[]
+    near: NbaBetSim
+    far: NbaBetSim
+    trusted: boolean
+    reason: string
+  }
+  weights_live: { margin: number; total: number }
+}
+
+export interface NbaStatus {
+  games: number
+  first_season: string | null
+  last_season: string | null
+  games_with_closing_odds: number
+  next_game_utc: string | null
+  next_game: string | null
+  next_game_preseason: boolean
+  regular_season_start_utc: string | null
+  regular_season_started: boolean
+  validation: NbaValidation | null
+}
 
 export interface ColombiaStatus {
   matches: number
@@ -203,7 +258,7 @@ export interface ColombiaStatus {
 }
 
 /** Botones que gastan cuota de API-Football (nada corre solo). */
-export type ActionName = 'actualizar' | 'cuotas' | 'verificar' | 'completar'
+export type ActionName = 'actualizar' | 'cuotas' | 'verificar' | 'completar' | 'nba' | 'nba_cuotas'
 
 export interface ActionRun {
   action: ActionName
@@ -224,14 +279,20 @@ export interface ActionResult {
 
 export interface ActionStatus {
   quota: { used: number; limit: number; breakdown: Record<string, number>; resets_at: string }
+  /** API de baloncesto (NBA): misma clave, cuota aparte. */
+  quota_basketball: { used: number; limit: number; breakdown: Record<string, number> }
   running: ActionRun | null
   last: Partial<Record<ActionName, ActionResult>>
   /** Primera visita desde que se renovó la cuota: toca actualizar el día. */
   update_due: boolean
+  /** La actualización NBA (gratis) toca: la última fue hace más de 3 horas. */
+  nba_update_due: boolean
   titles: Record<ActionName, string>
 }
 
 export interface ActionEstimates {
+  nba: { requests: number; games: number }
+  nba_cuotas: { requests: number; games: number }
   actualizar: { requests: number; approximate: boolean }
   cuotas: { requests: number }
   verificar: { requests: number; matches: number }
