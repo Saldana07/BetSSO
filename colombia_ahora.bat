@@ -19,8 +19,27 @@ if exist "%LOCK%" (
 )
 mkdir "%LOCK%" 2>nul || goto :busy
 
-docker info >nul 2>&1 || goto :nodocker
-docker compose -f ..\docker-compose.yml exec -T db pg_isready -U bet_user -d bet_db >nul 2>&1 || goto :nodocker
+REM Docker: si esta cerrado se abre y se espera (es una tarea con hora limite:
+REM el 23/09 encontro Docker cerrado a las 19:10 y el partido de las 19:30 se perdio).
+docker info >nul 2>&1 && goto docker_ok
+explorer.exe "shell:AppsFolder\Docker.DockerForWindows.Settings" >nul 2>&1
+set INTENTOS=0
+:wait_docker
+timeout /t 5 /nobreak >nul
+set /a INTENTOS+=1
+docker info >nul 2>&1 && goto docker_ok
+if %INTENTOS% GEQ 36 goto :nodocker
+goto wait_docker
+:docker_ok
+docker compose -f ..\docker-compose.yml up -d db >nul 2>&1
+set INTENTOS=0
+:wait_db
+docker compose -f ..\docker-compose.yml exec -T db pg_isready -U bet_user -d bet_db >nul 2>&1 && goto db_ok
+timeout /t 2 /nobreak >nul
+set /a INTENTOS+=1
+if %INTENTOS% GEQ 60 goto :nodocker
+goto wait_db
+:db_ok
 
 %PY% -m jobs.colombia_now --hours 6 || goto :fail
 
