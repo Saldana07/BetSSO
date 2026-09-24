@@ -1,4 +1,4 @@
-import { resetTime } from '../format'
+import { isNba, resetTime } from '../format'
 import type { ActionStatus, Scope } from '../types'
 import { Icon, type IconName } from './Icon'
 
@@ -6,6 +6,7 @@ const SECTIONS: { value: Scope; label: string; short: string; icon: IconName }[]
   { value: 'europa', label: 'Europa', short: 'Europa', icon: 'globe' },
   { value: 'colombia', label: 'Fútbol colombiano', short: 'Colombia', icon: 'flag' },
   { value: 'nba', label: 'NBA', short: 'NBA', icon: 'ball' },
+  { value: 'nba_players', label: 'NBA · jugadores', short: 'Jugadores', icon: 'user' },
 ]
 
 function Brand({ compact = false }: { compact?: boolean }) {
@@ -77,7 +78,7 @@ export function Sidebar({ scope, onScope, meta, status, onReload }: {
               <Icon name={s.icon} />
               <span className={`grow text-[15px] ${active ? 'font-semibold' : 'font-medium'}`}>{s.label}</span>
               {active ? (
-                <span className={`size-2 rounded-full ${s.value === 'nba' ? 'bg-sky' : 'bg-lime'}`} />
+                <span className={`size-2 rounded-full ${isNba(s.value) ? 'bg-sky' : 'bg-lime'}`} />
               ) : (
                 m && <span className={`text-xs text-faint ${m.mono ? 'font-mono' : ''}`}>{m.text}</span>
               )}
@@ -122,7 +123,7 @@ export function MobileTopBar({ scope, onScope, status, onReload }: {
   status: ActionStatus | null
   onReload: () => void
 }) {
-  const q = status ? (scope === 'nba' ? status.quota_basketball : status.quota) : null
+  const q = status ? (isNba(scope) ? status.quota_basketball : status.quota) : null
   const left = q ? q.limit - q.used : 1
   return (
     <div className="flex flex-col gap-4 px-4 pt-5 sm:px-8 lg:hidden">
@@ -132,9 +133,9 @@ export function MobileTopBar({ scope, onScope, status, onReload }: {
           {q && (
             <span
               className={`flex min-h-11 items-center gap-2 rounded-xl border border-ink-600 bg-ink-850 px-3 font-mono text-[13px] ${left <= 0 ? 'text-loss' : 'text-fg-2'}`}
-              title={`Consultas de ${scope === 'nba' ? 'baloncesto' : 'fútbol'} usadas hoy`}
+              title={`Consultas de ${isNba(scope) ? 'baloncesto' : 'fútbol'} usadas hoy`}
             >
-              <span className={`size-2 rounded-full ${left <= 0 ? 'bg-loss' : scope === 'nba' ? 'bg-sky' : 'bg-lime'}`} />
+              <span className={`size-2 rounded-full ${left <= 0 ? 'bg-loss' : isNba(scope) ? 'bg-sky' : 'bg-lime'}`} />
               {q.used}/{q.limit}
             </span>
           )}
@@ -148,7 +149,7 @@ export function MobileTopBar({ scope, onScope, status, onReload }: {
           </button>
         </div>
       </div>
-      <nav aria-label="Apartados" className="grid grid-cols-3 gap-1 rounded-2xl border border-ink-600 bg-ink-850 p-1">
+      <nav aria-label="Apartados" className="grid grid-cols-4 gap-1 rounded-2xl border border-ink-600 bg-ink-850 p-1">
         {SECTIONS.map((s) => {
           const active = s.value === scope
           return (

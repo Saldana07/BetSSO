@@ -27,8 +27,27 @@ function sideLine(homeLine: string, selection: string): string {
   return homeLine.startsWith('-') ? `+${homeLine.slice(1)}` : `-${homeLine}`
 }
 
+// Líneas de jugadores: "P1629029_PRA_45.5" (jugador, estadística, línea).
+const PROP_STATS: Record<string, string> = {
+  PTS: 'puntos',
+  REB: 'rebotes',
+  AST: 'asistencias',
+  FG3M: 'triples',
+  PR: 'puntos + rebotes',
+  PA: 'puntos + asistencias',
+  RA: 'rebotes + asistencias',
+  PRA: 'puntos + rebotes + asistencias',
+}
+
+function propMarket(market: string): { stat: string; line: string } | null {
+  const m = /^P\d+_([A-Z0-9]+)_([\d.]+)$/.exec(market)
+  return m && PROP_STATS[m[1]] ? { stat: PROP_STATS[m[1]], line: m[2] } : null
+}
+
 export function formatMarket(market: string): string {
   if (MARKET_LABELS[market]) return MARKET_LABELS[market]
+  const prop = propMarket(market)
+  if (prop) return `Línea de jugador · ${prop.stat}`
   // NBA
   if (market.startsWith('SPREAD_')) return `Hándicap de puntos (local ${sideLine(line(market, 'SPREAD_'), 'HOME')})`
   if (market.startsWith('TOTAL_')) return `Más/menos de ${line(market, 'TOTAL_')} puntos`
@@ -56,6 +75,8 @@ export function formatSelection(market: string, selection: string, teams?: Teams
     if (selection === 'X2') return `Empate o ${teams.away}`
     if (selection === '12') return `${teams.home} o ${teams.away}`
   }
+  const prop = propMarket(market)
+  if (prop) return `${SELECTION_LABELS[selection] ?? selection} ${prop.line} ${prop.stat}`
   const stat = countStat(market)
   if (stat) return `${SELECTION_LABELS[selection] ?? selection} ${line(market, stat.prefix)} ${stat.name}`
   if (market.startsWith('TEAM_OU_')) {

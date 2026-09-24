@@ -37,6 +37,8 @@ class PickOfTheDayResponse(BaseModel):
     final_score: str | None = None      # "2-1"
     actual_stat: int | None = None      # total real de córners/tiros/tarjetas/faltas del mercado
     closing_odds: float | None = None
+    # Líneas de jugadores de la NBA: a quién se refiere el pick.
+    player: str | None = None
 
 
 class DailyCandidateResponse(PickOfTheDayResponse):
@@ -116,6 +118,7 @@ class MarketRow(BaseModel):
     in_odds_range: bool    # dentro de 1.50-2.00
     ev_suspicious: bool    # EV por encima del techo plausible: casi siempre error del modelo
     is_pick: bool          # pasó el filtro estricto de picks del día
+    player: str | None = None   # líneas de jugadores de la NBA
 
 
 class MatchMarketsResponse(BaseModel):
@@ -194,3 +197,5 @@ class NbaStatus(BaseModel):
     regular_season_start_utc: datetime | None
     regular_season_started: bool = False
     validation: dict | None                 # models/nba/validation.json (ver ml/nba/train.py)
+    props_validation: dict | None = None    # models/nba/props.json (ver ml/nba/props.py)
+    props_coverage: dict | None = None      # líneas de jugadores históricas guardadas

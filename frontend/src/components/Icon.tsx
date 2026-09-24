@@ -18,6 +18,7 @@ const PATHS: Record<string, string[]> = {
   chevronRight: ['M9 6l6 6-6 6'],
   arrowRight: ['M5 12h14', 'M13 6l6 6-6 6'],
   info: ['M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z', 'M12 11v5', 'M12 8h.01'],
+  user: ['M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8z', 'M4 21a8 8 0 0 1 16 0'],
   bandage: ['M8 8l8 8', 'M4.5 12.5l8-8a3.5 3.5 0 0 1 5 5l-8 8a3.5 3.5 0 0 1-5-5z'],
 }
 

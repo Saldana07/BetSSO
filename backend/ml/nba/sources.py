@@ -61,7 +61,8 @@ def _get(url: str, headers: dict | None = None, params: dict | None = None, time
             last = RuntimeError(f"{url}: HTTP {r.status_code}")
         except (httpx.HTTPError, ValueError) as exc:
             last = exc
-        time.sleep(2 * (attempt + 1))
+        if attempt < tries - 1:
+            time.sleep(2 * (attempt + 1))
     raise RuntimeError(f"No se pudo leer {url}: {last}")
 
 

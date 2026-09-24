@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getActionEstimates, getActionStatus, launchAction } from './api'
+import { isNba as isNbaScope } from './format'
 import type { ActionEstimates, ActionName, ActionResult, ActionStatus, Scope } from './types'
 
 const POLL_MS = 2500
@@ -24,7 +25,7 @@ export interface Actions {
  *  actualización gratuita si pasaron 3 horas. Solo se sondea el estado
  *  mientras algo corre. */
 export function useActions(scope: Scope, onFinished: () => void): Actions {
-  const isNba = scope === 'nba'
+  const isNba = isNbaScope(scope)
   const [status, setStatus] = useState<ActionStatus | null>(null)
   const [estimates, setEstimates] = useState<ActionEstimates | null>(null)
   const [error, setError] = useState<string | null>(null)

@@ -5,6 +5,9 @@
   2. cdn.nba.com: calendario de la temporada en curso (partidos por jugar).
   3. ESPN: cuotas de apertura/cierre de cada partido desde 2021-22, 1 petición
      por partido + 1 por día. Es la vara para medir el modelo contra el mercado.
+  4. Jugadores: su estadística en cada partido desde 2021-22 (stats.nba.com,
+     1 petición por temporada y tipo) y las líneas de jugadores de DraftKings
+     que ESPN guarda (en la NBA, desde los playoffs de 2026).
 
 Nada de esto gasta cuota de API-Sports. Es reanudable: lo ya traído no se
 vuelve a pedir (las temporadas cerradas quedan anotadas en
@@ -25,12 +28,19 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.models import NbaGame
-from ml.nba import sources
-from ml.nba.store import ensure_tables, games_by_nicknames, nickname, store_odds, upsert_games, utcnow
+from ml.nba import player_sources, sources
+from ml.nba.store import (
+    ensure_tables, game_players, games_by_nicknames, nickname, store_odds, store_props, upsert_games,
+    upsert_player_games, utcnow,
+)
 
 STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "nba" / "import_state.json"
 FIRST_SEASON = 2014
 ODDS_FIRST_SEASON = 2021
+PLAYERS_FIRST_SEASON = 2021
+# ESPN guarda las líneas de jugadores de la NBA desde aquí (antes: 404).
+PROPS_SINCE = date(2026, 4, 1)
+ESPN_PROP_PROVIDERS = ("100", "58")   # DraftKings, ESPN BET
 ESPN_PAUSE = 0.3          # segundos entre tandas: sin prisa, es un servicio ajeno
 ESPN_WORKERS = 8          # peticiones a la vez (una a una eran más de 2 horas)
 ESPN_DAYS_PER_BATCH = 5
@@ -75,6 +85,71 @@ def import_games(db, seasons: list[str]) -> int:
             state["seasons_done"].append(season)
             _save(state)
     return total
+
+
+def import_player_logs(db, seasons: list[str]) -> int:
+    """Estadística de cada jugador en cada partido. Las temporadas cerradas no se repiten."""
+    state = _state()
+    done = state.setdefault("player_seasons_done", [])
+    closed = last_finished_season(date.today())
+    total = 0
+    for season in seasons:
+        if season in done:
+            continue
+        n = 0
+        for label in sources.SEASON_TYPES:
+            rows = player_sources.parse_player_log(player_sources.fetch_player_game_log(season, label))
+            n += upsert_player_games(db, rows)
+            db.commit()
+            time.sleep(STATS_PAUSE)
+        print(f"  jugadores {season}: {n} filas", flush=True)
+        total += n
+        if season <= closed:
+            done.append(season)
+            _save(state)
+    return total
+
+
+def store_espn_props_for_game(db, game: NbaGame, snapshot: str, recorded_at) -> int:
+    """Líneas de jugadores de ESPN de un partido (todas sus casas). 0 si no hay."""
+    stored = 0
+    for provider in ESPN_PROP_PROVIDERS:
+        items = player_sources.fetch_espn_props(game.espn_event_id, provider)
+        if not items:
+            continue
+        rows = player_sources.parse_espn_props(items, snapshot)
+        if not rows:
+            continue
+        names = player_sources.espn_athlete_names({r["athlete_id"] for r in rows})
+        candidates = game_players(db, game)
+        for r in rows:
+            r["player_name"] = names.get(r["athlete_id"]) or ("ESPN " + r["athlete_id"])
+            r["player_id"] = player_sources.match_player(r["player_name"], candidates) if candidates else None
+        book = "DraftKings" if provider == "100" else "ESPN BET"
+        replace = ("OPEN", snapshot) if snapshot != "LIVE" else ("OPEN",)
+        stored += store_props(db, game.id, "ESPN", book, rows, recorded_at, replace_snapshots=replace)
+    return stored
+
+
+def import_espn_props_history(db) -> tuple[int, int]:
+    """Líneas de jugadores de partidos ya jugados (desde PROPS_SINCE), una vez."""
+    state = _state()
+    checked = set(state.setdefault("props_checked", []))
+    todo = db.execute(select(NbaGame).where(
+        NbaGame.status == "FINISHED", NbaGame.game_date >= PROPS_SINCE, NbaGame.espn_event_id.isnot(None),
+        NbaGame.season_type.in_(("REGULAR", "PLAYIN", "PLAYOFFS"))).order_by(NbaGame.game_date)).scalars().all()
+    todo = [g for g in todo if g.id not in checked]
+    games = lines = 0
+    for g in todo:
+        n = store_espn_props_for_game(db, g, "CLOSE", g.tipoff_utc or utcnow())
+        db.commit()
+        games += bool(n)
+        lines += n
+        checked.add(g.id)
+        state["props_checked"] = sorted(checked)
+        _save(state)
+        time.sleep(ESPN_PAUSE)
+    return games, lines
 
 
 def import_schedule(db) -> int:
@@ -149,7 +224,7 @@ def import_espn_odds(db, first_season: str, max_games: int | None = None) -> tup
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--solo", choices=["partidos", "calendario", "cuotas"], default=None)
+    parser.add_argument("--solo", choices=["partidos", "calendario", "cuotas", "jugadores"], default=None)
     parser.add_argument("--max-cuotas", type=int, default=None, help="Tope de partidos a los que pedir cuotas en esta corrida")
     args = parser.parse_args()
     ensure_tables()
@@ -165,6 +240,12 @@ def main():
         if args.solo in (None, "cuotas"):
             fetched, with_odds = import_espn_odds(db, sources.season_label(ODDS_FIRST_SEASON), args.max_cuotas)
             print(f"NBA cuotas históricas (ESPN): {fetched} partidos revisados, {with_odds} con cuotas.")
+        if args.solo in (None, "jugadores"):
+            last = int(last_finished_season(date.today())[:4])
+            n = import_player_logs(db, [sources.season_label(y) for y in range(PLAYERS_FIRST_SEASON, last + 1)])
+            print(f"NBA jugadores: {n} filas de estadística por partido.")
+            games, lines = import_espn_props_history(db)
+            print(f"NBA líneas de jugadores (ESPN): {lines} líneas de {games} partidos.")
     finally:
         db.close()
 

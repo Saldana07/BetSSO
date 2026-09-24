@@ -55,25 +55,27 @@ function withParams(path: string, params: Record<string, string | undefined>): s
   return qs ? `${path}?${qs}` : path
 }
 
-/** El apartado NBA tiene su propia API (/api/nba) con las mismas respuestas;
- *  fútbol usa /api/predictions con scope=europa|colombia. */
-function route(path: string, scope: Scope): [string, string | undefined] {
-  return scope === 'nba' ? [`/api/nba${path}`, undefined] : [`/api/predictions${path}`, scope]
+/** La NBA tiene su propia API (/api/nba) con las mismas respuestas (kind=player
+ *  para las líneas de jugadores); fútbol usa /api/predictions con scope. */
+function route(path: string, scope: Scope): [string, Record<string, string | undefined>] {
+  if (scope === 'nba') return [`/api/nba${path}`, {}]
+  if (scope === 'nba_players') return [`/api/nba${path}`, { kind: 'player' }]
+  return [`/api/predictions${path}`, { scope }]
 }
 
 export function getTopPicks(minConfidence?: ConfidenceLevel, day?: string, scope: Scope = 'europa'): Promise<PickOfTheDay[]> {
-  const [path, s] = route('/top-picks', scope)
-  return getJson<PickOfTheDay[]>(withParams(path, { min_confidence: minConfidence, day, tz: LOCAL_TZ, scope: s }))
+  const [path, extra] = route('/top-picks', scope)
+  return getJson<PickOfTheDay[]>(withParams(path, { ...extra, min_confidence: minConfidence, day, tz: LOCAL_TZ }))
 }
 
 export function getDailyCandidates(minConfidence?: ConfidenceLevel, day?: string, scope: Scope = 'europa'): Promise<DailyCandidate[]> {
-  const [path, s] = route('/daily-candidates', scope)
-  return getJson<DailyCandidate[]>(withParams(path, { min_confidence: minConfidence, day, tz: LOCAL_TZ, scope: s }))
+  const [path, extra] = route('/daily-candidates', scope)
+  return getJson<DailyCandidate[]>(withParams(path, { ...extra, min_confidence: minConfidence, day, tz: LOCAL_TZ }))
 }
 
 export function getPerformance(scope: Scope = 'europa'): Promise<Performance> {
-  const [path, s] = route('/performance', scope)
-  return getJson<Performance>(withParams(path, { scope: s }))
+  const [path, extra] = route('/performance', scope)
+  return getJson<Performance>(withParams(path, extra))
 }
 
 export function getNbaStatus(): Promise<NbaStatus> {
@@ -109,17 +111,21 @@ export function getSimulation(matchId: number): Promise<Simulation> {
 }
 
 export function getTodaysMatches(day?: string, scope: Scope = 'europa'): Promise<MatchSummary[]> {
-  const [path, s] = scope === 'nba' ? ['/api/nba/games/today', undefined] : route('/matches/today', scope)
-  return getJson<MatchSummary[]>(withParams(path, { day, tz: LOCAL_TZ, scope: s }))
+  const [path, extra] = scope === 'nba' || scope === 'nba_players' ? route('/games/today', scope) : route('/matches/today', scope)
+  return getJson<MatchSummary[]>(withParams(path, { ...extra, day, tz: LOCAL_TZ }))
 }
 
 export function getMatchMarkets(matchId: number, scope: Scope = 'europa'): Promise<MatchMarkets> {
-  return getJson<MatchMarkets>(scope === 'nba' ? `/api/nba/games/${matchId}/markets` : `/api/predictions/${matchId}/markets`)
+  if (scope === 'nba' || scope === 'nba_players') {
+    const [path, extra] = route(`/games/${matchId}/markets`, scope)
+    return getJson<MatchMarkets>(withParams(path, extra))
+  }
+  return getJson<MatchMarkets>(`/api/predictions/${matchId}/markets`)
 }
 
 export function getModelVsMarket(scope: Scope = 'europa'): Promise<ModelVsMarket> {
-  const [path, s] = route('/model-vs-market', scope)
-  return getJson<ModelVsMarket>(withParams(path, { scope: s }))
+  const [path, extra] = route('/model-vs-market', scope)
+  return getJson<ModelVsMarket>(withParams(path, extra))
 }
 
 export function getActionStatus(): Promise<ActionStatus> {

@@ -1,4 +1,10 @@
-import type { ActionStatus } from './types'
+import type { ActionStatus, Scope } from './types'
+
+/** Los dos apartados de la NBA (partido y jugadores) comparten botones,
+ *  cuota de baloncesto, lesiones y calendario. */
+export function isNba(scope: Scope): boolean {
+  return scope === 'nba' || scope === 'nba_players'
+}
 
 export type DayOffset = -1 | 0 | 1
 

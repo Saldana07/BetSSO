@@ -80,7 +80,8 @@ export function MarketsTab({ matchId, scope = 'europa' }: { matchId: number; sco
         >
           <span className="text-xs font-semibold tracking-[0.12em] text-faint uppercase">Lo más favorable</span>
           <p className="mt-1.5 mb-0 font-display text-xl font-bold">
-            {formatMarket(best.market)} · {formatSelection(best.market, best.selection, teams)}
+            {best.player ? `${best.player} · ` : `${formatMarket(best.market)} · `}
+            {formatSelection(best.market, best.selection, teams)}
           </p>
           <p className="mt-1.5 mb-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fg-2">
             <span>
@@ -131,7 +132,10 @@ export function MarketsTab({ matchId, scope = 'europa' }: { matchId: number; sco
             {rows.map((r) => (
               <tr key={`${r.market}-${r.selection}`} className={`border-t border-ink-700 ${r.is_pick ? 'bg-lime/5' : ''}`}>
                 <td className="py-2.5 pr-3">
-                  <span className="block">{formatSelection(r.market, r.selection, teams)}</span>
+                  <span className="block">
+                    {r.player && <span className="font-semibold">{r.player} · </span>}
+                    {formatSelection(r.market, r.selection, teams)}
+                  </span>
                   <span className="text-xs text-muted">
                     {formatMarket(r.market)}
                     {r.is_pick && <span className="ml-2 font-mono font-semibold text-lime">PICK</span>}

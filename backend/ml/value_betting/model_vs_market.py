@@ -21,6 +21,9 @@ FAMILIES = {
     "1X2": "1X2", "BTTS": "BTTS", "OU": "GOALS_OU", "TEAM_OU": "GOALS_OU", "AH": "AH",
     # NBA: ganador (con prórroga), hándicap de puntos y total de puntos.
     "ML": "ML", "SPREAD": "SPREAD", "TOTAL": "TOTAL",
+    # NBA, líneas de jugadores: una familia por estadística.
+    "PROP_PTS": "PROP_PTS", "PROP_REB": "PROP_REB", "PROP_AST": "PROP_AST", "PROP_FG3M": "PROP_FG3M",
+    "PROP_PR": "PROP_PR", "PROP_PA": "PROP_PA", "PROP_RA": "PROP_RA", "PROP_PRA": "PROP_PRA",
 }
 
 

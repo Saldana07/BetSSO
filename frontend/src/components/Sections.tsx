@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ColombiaStatus, NbaBetSim, NbaStatus, NbaValidation } from '../types'
+import type { ColombiaStatus, NbaBetSim, NbaPropsValidation, NbaStatus, NbaValidation } from '../types'
 import { Icon } from './Icon'
 
 const eyebrow = 'text-xs font-semibold tracking-[0.12em] text-faint uppercase'
@@ -48,7 +48,7 @@ export function ColombiaCard({ status }: { status: ColombiaStatus | null }) {
 }
 
 /** Cuándo hay NBA: cuenta atrás hasta la temporada regular y primeros partidos. */
-export function NbaSeasonCard({ status }: { status: NbaStatus | null }) {
+export function NbaSeasonCard({ status, players = false }: { status: NbaStatus | null; players?: boolean }) {
   const [now] = useState(() => Date.now())
   if (!status?.regular_season_start_utc || status.regular_season_started) return null
   // Días de calendario en tu zona horaria (no horas redondeadas hacia arriba).
@@ -65,13 +65,23 @@ export function NbaSeasonCard({ status }: { status: NbaStatus | null }) {
           <div className="flex flex-col gap-2 border-b border-ink-600 px-8 py-7 sm:border-r sm:border-b-0">
             <span className={eyebrow}>Pretemporada · {dateLabel(status.next_game_utc)}</span>
             {status.next_game && <span className="font-display text-2xl font-bold tracking-tight">{status.next_game}</span>}
-            <span className="text-sm leading-relaxed text-muted">Sin picks: los titulares juegan poco y el marcador no dice nada de la temporada.</span>
+            <span className="text-sm leading-relaxed text-muted">
+              {players
+                ? 'Sin picks: los titulares juegan pocos minutos. Sirve para comprobar que las líneas de jugadores de Betano llegan bien.'
+                : 'Sin picks: los titulares juegan poco y el marcador no dice nada de la temporada.'}
+            </span>
           </div>
         )}
         <div className="flex flex-col gap-2 px-8 py-7">
           <span className={eyebrow}>Temporada regular · {dateLabel(status.regular_season_start_utc)}</span>
-          <span className="font-display text-2xl font-bold tracking-tight">Ganador, hándicap y total</span>
-          <span className="text-sm leading-relaxed text-muted">Desde ese día hay picks, con su contador aparte de los de fútbol.</span>
+          <span className="font-display text-2xl font-bold tracking-tight">
+            {players ? 'Puntos, rebotes, asistencias y triples' : 'Ganador, hándicap y total'}
+          </span>
+          <span className="text-sm leading-relaxed text-muted">
+            {players
+              ? 'Desde ese día hay picks de jugadores, a prueba, con su contador aparte de los de equipos.'
+              : 'Desde ese día hay picks, con su contador aparte de los de fútbol.'}
+          </span>
         </div>
       </div>
     </section>
@@ -169,14 +179,22 @@ export function NbaValidationCard({ v }: { v: NbaValidation | null }) {
 }
 
 /** De dónde salen los datos de la NBA. */
-export function NbaDataCard({ status }: { status: NbaStatus | null }) {
+export function NbaDataCard({ status, players = false }: { status: NbaStatus | null; players?: boolean }) {
   if (!status) return null
-  const rows: [string, string, boolean][] = [
-    [`Partidos ${status.first_season?.slice(0, 4) ?? ''}-${status.last_season?.slice(-2) ?? ''} · nba.com`, n(status.games), true],
-    ['Con línea de cierre · ESPN', n(status.games_with_closing_odds), true],
-    ['Parte de lesiones · ESPN', 'en cada partido', false],
-    ['Betano, Pinnacle, Bet365', '100/día aparte', false],
-  ]
+  const rows: [string, string, boolean][] = players
+    ? [
+        ['Estadística por partido de cada jugador · nba.com', 'desde 2021-22', false],
+        ['Líneas de jugadores de cierre · ESPN (DraftKings)', n(status.props_coverage?.lines ?? 0), true],
+        ['Partidos con esas líneas', n(status.props_coverage?.games ?? 0), true],
+        ['Parte de lesiones · ESPN', 'en cada partido', false],
+        ['Líneas de Betano / Bet365', 'en la misma consulta', false],
+      ]
+    : [
+        [`Partidos ${status.first_season?.slice(0, 4) ?? ''}-${status.last_season?.slice(-2) ?? ''} · nba.com`, n(status.games), true],
+        ['Con línea de cierre · ESPN', n(status.games_with_closing_odds), true],
+        ['Parte de lesiones · ESPN', 'en cada partido', false],
+        ['Betano, Pinnacle, Bet365', '100/día aparte', false],
+      ]
   return (
     <section aria-label="Datos" className="flex flex-col gap-3.5 rounded-3xl border border-ink-600 bg-ink-850 p-6">
       <span className={eyebrow}>De dónde salen los datos</span>
@@ -186,6 +204,100 @@ export function NbaDataCard({ status }: { status: NbaStatus | null }) {
           <span className={mono ? 'font-mono' : 'text-muted'}>{value}</span>
         </div>
       ))}
+    </section>
+  )
+}
+
+const PROP_STAT_LABELS: Record<string, string> = {
+  PTS: 'Puntos',
+  REB: 'Rebotes',
+  AST: 'Asistencias',
+  FG3M: 'Triples',
+  PR: 'Pts + reb',
+  PA: 'Pts + ast',
+  RA: 'Reb + ast',
+  PRA: 'Pts + reb + ast',
+}
+
+/** Validación del modelo de jugadores: contra resultados y contra las líneas
+ *  reales de cierre de DraftKings (playoffs 2026). */
+export function NbaPropsValidationCard({ v }: { v: NbaPropsValidation | null }) {
+  if (!v) {
+    return (
+      <section className="rounded-3xl border border-ink-600 bg-ink-850 p-6 text-sm text-muted">
+        El modelo de jugadores aún no se ha entrenado: «Actualizar NBA» lo hace la primera vez.
+      </section>
+    )
+  }
+  const close = v.market?.CLOSE
+  const all = close?.by_stat?.TODAS
+  const beats = v.w_live > 0
+  const outcomes = Object.entries(v.outcomes ?? {}).filter(([k]) => ['PTS', 'REB', 'AST', 'FG3M', 'PRA'].includes(k))
+  return (
+    <section aria-label="Prueba del modelo de jugadores" className="flex flex-col gap-6 rounded-3xl border border-ink-600 bg-ink-850 p-6 sm:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-1.5">
+          <h2 className="m-0 font-display text-[28px] font-extrabold tracking-tight">Prueba del modelo de jugadores</h2>
+          <span className="text-sm text-muted">
+            {close?.n
+              ? `${n(close.n)} líneas reales de cierre de DraftKings en ${close.games} partidos de los playoffs 2026`
+              : 'Sin líneas históricas para comparar todavía'}
+          </span>
+        </div>
+        {all && (
+          <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${beats ? 'border-win/40 text-win' : 'border-loss-line text-loss'}`}>
+            {beats ? 'El modelo aporta sobre la línea' : 'El modelo no le gana a la casa'}
+          </span>
+        )}
+      </div>
+
+      {all && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="flex flex-col gap-1.5 rounded-2xl bg-ink-800 px-4 py-4">
+            <span className="text-xs text-muted">Error del modelo (Brier)</span>
+            <span className="font-mono text-2xl font-semibold">{all.brier_model.toFixed(4)}</span>
+            <span className="text-xs text-faint">menos es mejor</span>
+          </div>
+          <div className="flex flex-col gap-1.5 rounded-2xl bg-ink-800 px-4 py-4">
+            <span className="text-xs text-muted">Error de la casa (Brier)</span>
+            <span className="font-mono text-2xl font-semibold">{all.brier_market.toFixed(4)}</span>
+            <span className="text-xs text-faint">t = {all.t ?? '—'} · con |t| ≥ 2 hay veredicto</span>
+          </div>
+          <Sim
+            label="Apostar con el modelo · a cierre"
+            sim={close?.betting_model ? { bets: close.betting_model.bets, wins: close.betting_model.wins, profit: 0, roi: close.betting_model.roi } : undefined}
+            note={`${n(close?.betting_model?.bets ?? 0)} apuestas con EV > 2%`}
+          />
+        </div>
+      )}
+
+      {outcomes.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-[13px] text-fg-2">
+            Error medio de la proyección en {v.test_seasons?.join(' y ')} (contra el promedio de los últimos 10 partidos)
+          </span>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {outcomes.map(([stat, r]) => (
+              <div key={stat} className="flex flex-col gap-1 rounded-2xl bg-ink-800 px-3.5 py-3">
+                <span className="text-xs text-muted">{PROP_STAT_LABELS[stat] ?? stat}</span>
+                <span className="font-mono text-lg font-semibold">{r.mae_model.toFixed(2)}</span>
+                <span className={`font-mono text-xs ${r.mae_model <= r.mae_last10 ? 'text-win' : 'text-loss'}`}>
+                  últimos 10: {r.mae_last10.toFixed(2)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-start gap-3.5 rounded-2xl border border-sky-line bg-sky-bg px-5 py-4 text-[15px] leading-relaxed text-sky-fg">
+        <Icon name="user" size={20} className="mt-0.5" />
+        <span className="text-pretty">
+          {beats
+            ? 'El modelo le ganó a las líneas de cierre en la prueba: sus picks combinan la línea de la casa con lo que el modelo sabe de más. Aun así es una muestra corta (solo playoffs): el contador propio decide.'
+            : 'El modelo no le ganó a las líneas de cierre de DraftKings. Por eso los picks de jugadores solo aparecen cuando Betano o Bwin pagan más de lo que las demás casas consideran justo en esa misma línea. El modelo se sigue midiendo en "Modelo contra la casa".'}
+        </span>
+      </div>
     </section>
   )
 }

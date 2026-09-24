@@ -19,7 +19,7 @@ import { CandidatesTable, MatchList } from './components/MatchList'
 import { ModelVsMarket } from './components/ModelVsMarket'
 import { PickTicket } from './components/PickTicket'
 import { EmptyPicks, TomorrowCard } from './components/PicksExtras'
-import { ColombiaCard, NbaDataCard, NbaSeasonCard, NbaValidationCard } from './components/Sections'
+import { ColombiaCard, NbaDataCard, NbaPropsValidationCard, NbaSeasonCard, NbaValidationCard } from './components/Sections'
 import { MobileTopBar, Sidebar, type SectionMeta } from './components/Sidebar'
 import { CounterCard, KpiStrip } from './components/Stats'
 import type {
@@ -34,7 +34,7 @@ import type {
   Scope,
 } from './types'
 import { useActions } from './useActions'
-import { dayDate, dayLabel, dayTitle, type DayOffset } from './format'
+import { dayDate, dayLabel, dayTitle, isNba, type DayOffset } from './format'
 
 type PicksState =
   | { status: 'loading' }
@@ -44,15 +44,16 @@ type PicksState =
 
 type Selected = { match: MatchRef; pick?: PickOfTheDay }
 
-const SCOPES: Scope[] = ['europa', 'colombia', 'nba']
+const SCOPES: Scope[] = ['europa', 'colombia', 'nba', 'nba_players']
 
 const EYEBROW: Record<Scope, string> = {
   europa: 'Europa · mercados validados',
   colombia: 'Fútbol colombiano · contador propio',
   nba: 'NBA · experimental · contador propio',
+  nba_players: 'NBA · jugadores · a prueba, contador propio',
 }
 
-const PICKS_HEADING: Record<Scope, string> = { europa: 'Picks', colombia: 'Picks Colombia', nba: 'Picks NBA' }
+const PICKS_HEADING: Record<Scope, string> = { europa: 'Picks', colombia: 'Picks Colombia', nba: 'Picks NBA', nba_players: 'Picks de jugadores' }
 
 function emptyTitle(scope: Scope, offset: DayOffset, minConfidence: ConfidenceLevel | null): string {
   const when = dayLabel(offset)
@@ -61,11 +62,14 @@ function emptyTitle(scope: Scope, offset: DayOffset, minConfidence: ConfidenceLe
   if (offset === -1) return scope === 'europa' ? 'Ayer no hubo apuesta segura' : 'Ayer no hubo picks'
   if (scope === 'colombia') return `${day} no hay picks colombianos`
   if (scope === 'nba') return `${day} no hay picks de la NBA`
+  if (scope === 'nba_players') return `${day} no hay picks de jugadores`
   return `${day} no hay apuesta segura`
 }
 
 function emptyBody(scope: Scope, offset: DayOffset, minConfidence: ConfidenceLevel | null): string {
   if (minConfidence) return 'Prueba bajando el filtro de confianza, o vuelve cuando haya más mercados con backtest validado.'
+  if (scope === 'nba_players')
+    return 'Un pick de jugador necesita que Betano o Bwin paguen más de lo justo por una línea de puntos, rebotes, asistencias o triples. Las casas publican esas líneas el mismo día del partido: «Cuotas Betano / Pinnacle» las trae.'
   if (scope === 'nba')
     return 'Un pick de la NBA necesita que Betano o Bwin paguen más de lo justo (con «Cuotas Betano / Pinnacle»). Si no hay, es que el mercado está bien puesto: en la NBA pasa casi siempre.'
   if (offset === 1)
@@ -76,7 +80,7 @@ function emptyBody(scope: Scope, offset: DayOffset, minConfidence: ConfidenceLev
 function App() {
   const [scope, setScope] = useState<Scope>(() => {
     const s = new URLSearchParams(window.location.search).get('seccion')
-    return s === 'colombia' || s === 'nba' ? s : 'europa'
+    return s === 'colombia' || s === 'nba' || s === 'nba_players' ? s : 'europa'
   })
   const [colombiaStatus, setColombiaStatus] = useState<ColombiaStatus | null>(null)
   const [nbaStatus, setNbaStatus] = useState<NbaStatus | null>(null)
@@ -85,7 +89,12 @@ function App() {
   const [picksState, setPicksState] = useState<PicksState>({ status: 'loading' })
   const [candidates, setCandidates] = useState<DailyCandidate[]>([])
   const [matches, setMatches] = useState<MatchSummary[]>([])
-  const [performances, setPerformances] = useState<Record<Scope, Performance | null>>({ europa: null, colombia: null, nba: null })
+  const [performances, setPerformances] = useState<Record<Scope, Performance | null>>({
+    europa: null,
+    colombia: null,
+    nba: null,
+    nba_players: null,
+  })
   const [modelVsMarket, setModelVsMarket] = useState<ModelVsMarketData | null>(null)
   const [tomorrowPick, setTomorrowPick] = useState<PickOfTheDay | null>(null)
   const [selected, setSelected] = useState<Selected | null>(null)
@@ -120,8 +129,8 @@ function App() {
       .catch(() => setCandidates([]))
 
     // Los tres contadores: el lateral muestra el de cada apartado.
-    Promise.all(SCOPES.map((s) => getPerformance(s).catch(() => null))).then(([europa, colombia, nba]) =>
-      setPerformances({ europa, colombia, nba }),
+    Promise.all(SCOPES.map((s) => getPerformance(s).catch(() => null))).then(([europa, colombia, nba, nba_players]) =>
+      setPerformances({ europa, colombia, nba, nba_players }),
     )
 
     getModelVsMarket(scope)
@@ -182,15 +191,14 @@ function App() {
   const perf = performances[scope]
 
   const nbaStart = nbaStatus?.regular_season_start_utc
+  const seasonMeta = nbaStart && !nbaStatus?.regular_season_started
+    ? { text: new Date(nbaStart).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) }
+    : null
   const meta: Record<Scope, SectionMeta | null> = {
     europa: performances.europa ? { text: String(performances.europa.settled_picks), mono: true } : null,
     colombia: performances.colombia ? { text: String(performances.colombia.settled_picks + performances.colombia.pending_picks), mono: true } : null,
-    nba:
-      nbaStart && !nbaStatus?.regular_season_started
-        ? { text: new Date(nbaStart).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) }
-        : performances.nba
-          ? { text: String(performances.nba.settled_picks), mono: true }
-          : null,
+    nba: seasonMeta ?? (performances.nba ? { text: String(performances.nba.settled_picks), mono: true } : null),
+    nba_players: seasonMeta ?? (performances.nba_players ? { text: String(performances.nba_players.settled_picks), mono: true } : null),
   }
 
   const emptyActions =
@@ -211,7 +219,7 @@ function App() {
         <main className="mx-auto flex max-w-[1240px] flex-col gap-7 px-4 py-6 sm:px-8 lg:px-11 lg:py-9">
           <header className="flex flex-wrap items-end justify-between gap-5">
             <div className="flex flex-col gap-1.5">
-              <span className={`text-xs font-semibold tracking-[0.14em] uppercase ${scope === 'nba' ? 'text-sky' : 'text-lime'}`}>{EYEBROW[scope]}</span>
+              <span className={`text-xs font-semibold tracking-[0.14em] uppercase ${isNba(scope) ? 'text-sky' : 'text-lime'}`}>{EYEBROW[scope]}</span>
               <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
                 <h1 className="m-0 font-display text-5xl leading-none font-extrabold tracking-tight sm:text-[56px]">{dayTitle(dayOffset)}</h1>
                 <span className="text-[17px] text-muted">{dayDate(dayOffset)}</span>
@@ -222,7 +230,7 @@ function App() {
 
           <ActionBar scope={scope} actions={actions} />
 
-          {scope === 'nba' && <NbaSeasonCard status={nbaStatus} />}
+          {isNba(scope) && <NbaSeasonCard status={nbaStatus} players={scope === 'nba_players'} />}
 
           {perf && perf.settled_picks > 0 && <KpiStrip performance={perf} />}
 
@@ -237,7 +245,7 @@ function App() {
 
               {dayOffset === 1 && (
                 <p className="m-0 text-[13px] text-faint">
-                  {scope === 'nba'
+                  {isNba(scope)
                     ? 'Adelanto con las líneas de ahora: se rehacen cada vez que se actualiza la NBA (las lesiones de última hora mueven mucho las líneas).'
                     : 'Adelanto con las cuotas de ahora: se rehacen cuando abras la página mañana, o con «Refrescar cuotas» antes del partido.'}
                 </p>
@@ -293,12 +301,13 @@ function App() {
               {(!perf || perf.settled_picks === 0) && <CounterCard scope={scope} performance={perf} />}
               {tomorrowPick && <TomorrowCard pick={tomorrowPick} onSeeDay={() => setDayOffset(1)} />}
               {scope === 'colombia' && <ColombiaCard status={colombiaStatus} />}
-              {scope === 'nba' && <NbaDataCard status={nbaStatus} />}
+              {isNba(scope) && <NbaDataCard status={nbaStatus} players={scope === 'nba_players'} />}
               {modelVsMarket && <ModelVsMarket data={modelVsMarket} />}
             </aside>
           </div>
 
           {scope === 'nba' && <NbaValidationCard v={nbaStatus?.validation ?? null} />}
+          {scope === 'nba_players' && <NbaPropsValidationCard v={nbaStatus?.props_validation ?? null} />}
 
           <MatchList matches={matches} scope={scope} when={when} onOpen={openMatch} />
           <CandidatesTable candidates={otherCandidates} when={when} />

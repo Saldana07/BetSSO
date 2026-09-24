@@ -52,6 +52,14 @@ function Result({ pick }: { pick: PickOfTheDay }) {
       </div>
     )
   }
+  if (pick.is_settled && pick.is_win === null) {
+    return (
+      <div className="flex items-center gap-2 rounded-2xl border border-ink-600 bg-ink-800 px-4 py-3 text-sm text-fg-2">
+        <Icon name="x" size={16} />
+        Anulada: el jugador no jugó. Las casas devuelven la apuesta; no cuenta en el contador.
+      </div>
+    )
+  }
   if (pick.final_score) {
     return (
       <div className="flex items-center gap-2 rounded-2xl border border-ink-600 bg-ink-800 px-4 py-3 text-sm text-fg-2">
@@ -138,6 +146,7 @@ export function PickTicket({ pick, scope, rank, variant = 'hero', onOpen }: {
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className="text-xs font-semibold tracking-[0.1em] text-faint uppercase">{formatMarket(pick.market)}</span>
+            {pick.player && <span className={`font-display font-extrabold tracking-tight ${big ? 'text-2xl' : 'text-lg'}`}>{pick.player}</span>}
             <span className={`font-display font-bold tracking-tight ${big ? 'text-3xl' : 'text-xl'}`}>
               {formatSelection(pick.market, pick.selection, { home: pick.home_team, away: pick.away_team })}
             </span>
@@ -180,7 +189,9 @@ export function PickTicket({ pick, scope, rank, variant = 'hero', onOpen }: {
           <div className="flex items-start gap-3 rounded-2xl border border-warn-line bg-warn-bg px-4 py-3.5 text-sm leading-relaxed text-warn-fg">
             <Icon name="alert" className="mt-0.5" />
             <span className="text-pretty">
-              {scope === 'nba'
+              {scope === 'nba_players'
+                ? 'Línea de jugador, a prueba: se mide contra lo que las demás casas consideran justo en esa misma línea. Su contador aparte dirá si sirve.'
+                : scope === 'nba'
                 ? 'Pick de la NBA: nace de que esta casa pague más que la cuota justa de Pinnacle, no de la opinión del modelo. Su contador aparte dirá si sirve.'
                 : 'Modelo propio del fútbol colombiano, aún sin validar: este pick es una prueba. Su contador aparte dirá si sirve.'}
             </span>

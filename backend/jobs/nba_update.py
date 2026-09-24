@@ -10,6 +10,10 @@ Con --apisports, además, cuotas de Betano, Pinnacle, Bet365... de la API de
 baloncesto (misma clave que fútbol, cuota APARTE de 100 diarias): 1 consulta
 por día + 1 por partido; no repite partidos con cuotas de menos de 2 horas.
 
+Líneas de jugadores (a prueba, contador propio): jobs/nba_props.py, con las
+estadísticas de nba.com, las líneas de ESPN y las de la API de baloncesto que
+llegan en la misma respuesta de cuotas (sin consultas extra).
+
 La pretemporada no genera picks: los titulares juegan poco y los marcadores
 no dicen nada de la temporada.
 
@@ -39,6 +43,7 @@ from ml.nba.train import PARAMS_PATH
 from ml.value_betting.ev_kelly import evaluate_bet, is_safe_bet_candidate
 from ml.value_betting.market import fair_probabilities
 from ml.value_betting.settlement import UnknownMarketError, bet_won, profit_loss
+from jobs import nba_props
 
 settings = get_settings()
 DEFAULT_HOURS = 36
@@ -115,7 +120,7 @@ def fetch_apisports_live(db: Session, games: list[NbaGame], now: datetime) -> st
     todo = [g for g in games if g.id not in fresh]
     if not todo:
         return "las cuotas de Betano/Pinnacle tienen menos de 2 horas: no se repiten"
-    fetched = 0
+    fetched = props = unparsed = 0
     with sources.BasketballClient() as client:
         need_ids = [g for g in todo if g.apisports_game_id is None]
         for day in sorted({g.tipoff_utc.astimezone(timezone.utc).date() for g in need_ids}):
@@ -138,14 +143,19 @@ def fetch_apisports_live(db: Session, games: list[NbaGame], now: datetime) -> st
                 continue
             budget -= 1
             try:
-                rows = sources.parse_apisports_odds(client.odds(g.apisports_game_id))
+                response = client.odds(g.apisports_game_id)
             except RuntimeError as exc:
                 print(f"  [!] {exc}")
                 continue
+            rows = sources.parse_apisports_odds(response)
             store_odds(db, g.id, "APISPORTS", rows, now)
+            n_props, n_unparsed = nba_props.store_apisports_props(db, g, response, now)
+            props += n_props
+            unparsed += n_unparsed
             fetched += bool(rows)
     db.commit()
-    return f"cuotas de Betano/Pinnacle/... de {fetched} de {len(todo)} partidos"
+    note = f"; líneas de jugadores: {props}" + (f" ({unparsed} sin entender)" if unparsed else "")
+    return f"cuotas de Betano/Pinnacle/... de {fetched} de {len(todo)} partidos{note}"
 
 
 def load_model() -> dict | None:
@@ -258,7 +268,9 @@ def _closing_odds(db: Session, p: NbaPrediction) -> tuple[float, str] | None:
 
 def settle(db: Session, now: datetime) -> str:
     finished = select(NbaGame.id).where(NbaGame.status == "FINISHED", NbaGame.home_pts.isnot(None))
-    picks = db.execute(select(NbaPrediction).where(NbaPrediction.settled_at.is_(None),
+    # Solo los mercados de equipo: los de jugadores se liquidan con su estadística (nba_props).
+    team = settings.nba_model_version
+    picks = db.execute(select(NbaPrediction).where(NbaPrediction.settled_at.is_(None), NbaPrediction.model_version == team,
                                                     NbaPrediction.game_id.in_(finished))).scalars().all()
     wins = settled = 0
     for p in picks:
@@ -273,7 +285,7 @@ def settle(db: Session, now: datetime) -> str:
             p.closing_odds, p.closing_bookmaker = closing
         settled += 1
         wins += won
-    evals = db.execute(select(NbaEvaluation).where(NbaEvaluation.settled_at.is_(None),
+    evals = db.execute(select(NbaEvaluation).where(NbaEvaluation.settled_at.is_(None), NbaEvaluation.model_version == team,
                                                     NbaEvaluation.game_id.in_(finished))).scalars().all()
     n_eval = 0
     for e in evals:
@@ -304,7 +316,9 @@ def main():
     db = SessionLocal()
     try:
         print("Resultados:", update_results(db, now.date()))
+        print("Estadísticas de jugadores:", nba_props.update_player_logs(db, now.date()), "filas nuevas")
         print("Liquidación:", settle(db, now))
+        print("Liquidación de jugadores:", nba_props.settle_props(db, now))
         games = upcoming_games(db, now, args.horas)
         if not games:
             nxt = next_game(db, now)
@@ -313,9 +327,11 @@ def main():
             return
         print(f"Partidos en las próximas {args.horas:g} h: {len(games)}")
         print("Líneas de ESPN:", fetch_espn_live(db, games, now), "partidos")
+        print("Líneas de jugadores de ESPN:", nba_props.fetch_espn_props_live(db, games, now))
         if args.apisports:
             print("API de baloncesto:", fetch_apisports_live(db, games, now))
         print("Picks:", generate(db, games, now))
+        print("Picks de jugadores:", nba_props.generate_props(db, games, now))
     finally:
         db.close()
 

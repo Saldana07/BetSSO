@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # a los de fútbol). Ver ml/nba/.
     nba_model_version: str = "nba-v1"
     nba_top_picks_count: int = 3
+    # Líneas de jugadores de la NBA (puntos, rebotes, asistencias...): a prueba,
+    # con versión y contador propios, aparte de los mercados de equipo.
+    nba_props_model_version: str = "nba-props-v1"
+    nba_props_top_picks_count: int = 3
     # Actualización del día automática: la primera vez que se abre la página
     # cada mañana, desde esta hora local. (La cuota de la API se renueva a las
     # 00:00 UTC = 19:00 en Colombia; eso no se puede cambiar, pero así las

@@ -7,6 +7,8 @@ como número (22600001) y los reconstruye con ceros a la izquierda.
 import json
 from datetime import date, datetime, timezone
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -14,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.predictions import _CONFIDENCE_RANK, _DAY_QUERY, _TZ_QUERY, ConfidenceLevel, _day_bounds
 from app.core.config import Settings, get_settings
 from app.database import get_db
-from app.models import NbaEvaluation, NbaGame, NbaOdds, NbaPrediction
+from app.models import NbaEvaluation, NbaGame, NbaOdds, NbaPlayerGame, NbaPrediction
 from app.schemas import (
     DailyCandidateResponse, MarketRow, MatchMarketsResponse, MatchSummary, ModelVsMarketFamily,
     ModelVsMarketResponse, NbaStatus, PerformanceResponse, PickOfTheDayResponse,
@@ -26,11 +28,27 @@ from ml.nba.train import VALIDATION_PATH
 from ml.value_betting.confidence import SkillEvidence, confidence_label
 from ml.value_betting.ev_kelly import closing_line_value
 from ml.value_betting.model_vs_market import EvaluationRow, compare, market_family
+from jobs.nba_props import actual_value, parse_props_market, player_names, props_coverage
+from ml.nba.props import load_props_model
 
 router = APIRouter(prefix="/api/nba", tags=["nba"])
 
 LEAGUE_LABEL = {"REGULAR": "NBA", "PLAYIN": "NBA · Play-in", "PLAYOFFS": "NBA · Playoffs", "CUP": "NBA · Copa",
                 "PRESEASON": "NBA · Pretemporada"}
+
+
+# kind=team: ganador, hándicap y total del partido. kind=player: líneas de
+# jugadores (a prueba), con versión, picks y contador propios.
+Kind = Literal["team", "player"]
+_KIND = Query(default="team", description="team (mercados del partido) o player (líneas de jugadores, a prueba)")
+
+
+def _version(kind: str, settings: Settings) -> str:
+    return settings.nba_props_model_version if kind == "player" else settings.nba_model_version
+
+
+def _names(db: Session, markets) -> dict[int, str]:
+    return player_names(db, {p[0] for m in markets if (p := parse_props_market(m))})
 
 
 def _gid(match_id: int) -> str:
@@ -41,8 +59,16 @@ def _score(g: NbaGame) -> str | None:
     return f"{g.home_pts}-{g.away_pts}" if g.status == "FINISHED" and g.home_pts is not None else None
 
 
-def _to_response(p: NbaPrediction, cls=PickOfTheDayResponse):
+def _to_response(p: NbaPrediction, cls=PickOfTheDayResponse, names: dict[int, str] | None = None,
+                 db: Session | None = None):
     g = p.game
+    prop = parse_props_market(p.market) if p.model_version.startswith("nba-props") else None
+    actual = None
+    if prop and db is not None and _score(g):
+        pg = db.get(NbaPlayerGame, (g.id, prop[0]))
+        actual = int(actual_value(pg, prop[1])) if pg is not None else None
+    elif p.market.startswith("TOTAL_") and _score(g):
+        actual = g.home_pts + g.away_pts
     return cls(
         match_id=int(g.id), home_team=g.home_team.name, away_team=g.away_team.name,
         league=LEAGUE_LABEL.get(g.season_type, "NBA"), kickoff_utc=g.tipoff_utc,
@@ -55,7 +81,8 @@ def _to_response(p: NbaPrediction, cls=PickOfTheDayResponse):
         is_settled=p.settled_at is not None, is_win=p.is_win,
         profit_loss=float(p.profit_loss) if p.profit_loss is not None else None,
         final_score=_score(g),
-        actual_stat=(g.home_pts + g.away_pts) if p.market.startswith("TOTAL_") and _score(g) else None,
+        actual_stat=actual,
+        player=(names or {}).get(prop[0]) if prop else None,
         closing_odds=float(p.closing_odds) if p.closing_odds is not None else None,
         # Sin historial de picks en vivo todavía: experimental (su contador es la validación).
         confidence_label=confidence_label(float(p.expected_value), SkillEvidence(None, None, None)),
@@ -63,10 +90,10 @@ def _to_response(p: NbaPrediction, cls=PickOfTheDayResponse):
     )
 
 
-def _day_picks(db: Session, day, tz, only_picks: bool, settings: Settings) -> list[NbaPrediction]:
+def _day_picks(db: Session, day, tz, only_picks: bool, settings: Settings, kind: str = "team") -> list[NbaPrediction]:
     start, end = _day_bounds(day, tz)
     q = (select(NbaPrediction).join(NbaGame, NbaPrediction.game_id == NbaGame.id)
-         .where(NbaPrediction.model_version == settings.nba_model_version,
+         .where(NbaPrediction.model_version == _version(kind, settings),
                 NbaGame.tipoff_utc >= start, NbaGame.tipoff_utc < end)
          .order_by(NbaPrediction.expected_value.desc()))
     if only_picks:
@@ -86,8 +113,11 @@ def _filter(responses, min_confidence):
 
 @router.get("/top-picks", response_model=list[PickOfTheDayResponse])
 def top_picks(min_confidence: ConfidenceLevel | None = None, day: date | None = _DAY_QUERY,
-              tz: str | None = _TZ_QUERY, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
-    responses = _filter([_to_response(p) for p in _day_picks(db, day, tz, True, settings)], min_confidence)
+              tz: str | None = _TZ_QUERY, kind: Kind = _KIND, db: Session = Depends(get_db),
+              settings: Settings = Depends(get_settings)):
+    picks = _day_picks(db, day, tz, True, settings, kind)
+    names = _names(db, [p.market for p in picks])
+    responses = _filter([_to_response(p, names=names, db=db) for p in picks], min_confidence)
     if not responses:
         raise HTTPException(404, "No hay picks de la NBA ese día.")
     return responses
@@ -95,15 +125,16 @@ def top_picks(min_confidence: ConfidenceLevel | None = None, day: date | None = 
 
 @router.get("/daily-candidates", response_model=list[DailyCandidateResponse])
 def daily_candidates(min_confidence: ConfidenceLevel | None = None, day: date | None = _DAY_QUERY,
-                     tz: str | None = _TZ_QUERY, db: Session = Depends(get_db),
+                     tz: str | None = _TZ_QUERY, kind: Kind = _KIND, db: Session = Depends(get_db),
                      settings: Settings = Depends(get_settings)):
-    return _filter([_to_response(p, DailyCandidateResponse) for p in _day_picks(db, day, tz, False, settings)],
-                   min_confidence)
+    picks = _day_picks(db, day, tz, False, settings, kind)
+    names = _names(db, [p.market for p in picks])
+    return _filter([_to_response(p, DailyCandidateResponse, names, db) for p in picks], min_confidence)
 
 
 @router.get("/games/today", response_model=list[MatchSummary])
-def games_of_day(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, db: Session = Depends(get_db),
-                 settings: Settings = Depends(get_settings)):
+def games_of_day(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, kind: Kind = _KIND,
+                 db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
     """Todos los partidos del día (en la NBA todos los equipos tienen historial)."""
     start, end = _day_bounds(day, tz)
     games = db.execute(select(NbaGame).where(NbaGame.tipoff_utc >= start, NbaGame.tipoff_utc < end)
@@ -111,10 +142,11 @@ def games_of_day(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, db: 
     ids = [g.id for g in games]
     n_markets = dict(db.execute(
         select(NbaEvaluation.game_id, func.count()).where(NbaEvaluation.game_id.in_(ids),
-                                                          NbaEvaluation.model_version == settings.nba_model_version)
+                                                          NbaEvaluation.model_version == _version(kind, settings))
         .group_by(NbaEvaluation.game_id)).all())
     picked = set(db.execute(select(NbaPrediction.game_id).where(
-        NbaPrediction.game_id.in_(ids), NbaPrediction.is_pick_of_day.is_(True))).scalars())
+        NbaPrediction.game_id.in_(ids), NbaPrediction.is_pick_of_day.is_(True),
+        NbaPrediction.model_version == _version(kind, settings))).scalars())
     return [MatchSummary(match_id=int(g.id), home_team=g.home_team.name, away_team=g.away_team.name,
                          league=LEAGUE_LABEL.get(g.season_type, "NBA"), kickoff_utc=g.tipoff_utc,
                          n_markets=n_markets.get(g.id, 0), has_pick=g.id in picked, status=g.status,
@@ -123,19 +155,23 @@ def games_of_day(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, db: 
 
 
 @router.get("/games/{match_id}/markets", response_model=MatchMarketsResponse)
-def game_markets(match_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+def game_markets(match_id: int, kind: Kind = _KIND, db: Session = Depends(get_db),
+                 settings: Settings = Depends(get_settings)):
     """Mercados evaluados del partido (los guarda jobs/nba_update), ordenados
     con el mismo criterio que el fútbol: primero lo que tiene EV real."""
     g = db.get(NbaGame, _gid(match_id))
     if g is None:
         raise HTTPException(404, "Partido no encontrado.")
+    version = _version(kind, settings)
     evals = db.execute(select(NbaEvaluation).where(NbaEvaluation.game_id == g.id,
-                                                    NbaEvaluation.model_version == settings.nba_model_version)
-                       ).scalars().all()
+                                                    NbaEvaluation.model_version == version)).scalars().all()
     if not evals:
-        raise HTTPException(404, "Este partido aún no tiene cuotas evaluadas.")
+        raise HTTPException(404, "Este partido aún no tiene " + ("líneas de jugadores evaluadas." if kind == "player"
+                                                                 else "cuotas evaluadas."))
     picked = set(db.execute(select(NbaPrediction.market, NbaPrediction.selection).where(
-        NbaPrediction.game_id == g.id, NbaPrediction.is_pick_of_day.is_(True))).all())
+        NbaPrediction.game_id == g.id, NbaPrediction.is_pick_of_day.is_(True),
+        NbaPrediction.model_version == version)).all())
+    names = _names(db, [e.market for e in evals])
     rows = [MarketRow(
         market=e.market, selection=e.selection, bookmaker=e.best_bookmaker or "", odds=float(e.best_odds),
         model_probability=float(e.model_probability), implied_probability=1 / float(e.best_odds),
@@ -143,6 +179,7 @@ def game_markets(match_id: int, db: Session = Depends(get_db), settings: Setting
         in_odds_range=settings.odds_min <= float(e.best_odds) <= settings.odds_max,
         ev_suspicious=float(e.expected_value) > settings.max_plausible_ev,
         is_pick=(e.market, e.selection) in picked,
+        player=names.get(p[0]) if (p := parse_props_market(e.market)) and kind == "player" else None,
     ) for e in evals]
     rows.sort(key=lambda r: (r.expected_value < settings.min_pick_ev or r.ev_suspicious, -r.expected_value))
     history = lambda team_id: db.execute(select(func.count(NbaGame.id)).where(  # noqa: E731
@@ -178,11 +215,13 @@ def game_injuries(match_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/performance", response_model=PerformanceResponse)
-def performance(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+def performance(kind: Kind = _KIND, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
     picks = db.execute(select(NbaPrediction).where(NbaPrediction.is_pick_of_day.is_(True),
-                                                    NbaPrediction.model_version == settings.nba_model_version)
+                                                    NbaPrediction.model_version == _version(kind, settings))
                        ).scalars().all()
-    settled = [p for p in picks if p.settled_at is not None]
+    # Anuladas (el jugador no jugó): ni ganadas ni perdidas, fuera de la cuenta.
+    settled = [p for p in picks if p.settled_at is not None and p.is_win is not None]
+    picks = [p for p in picks if not (p.settled_at is not None and p.is_win is None)]
     wins = sum(1 for p in settled if p.is_win)
     pnl = sum(float(p.profit_loss or 0) for p in settled)
     clvs = [closing_line_value(float(p.bookmaker_odds), float(p.closing_odds)) for p in picks if p.closing_odds]
@@ -196,19 +235,24 @@ def performance(db: Session = Depends(get_db), settings: Settings = Depends(get_
 
 
 @router.get("/model-vs-market", response_model=ModelVsMarketResponse)
-def model_vs_market(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
-    version = settings.nba_model_version
+def model_vs_market(kind: Kind = _KIND, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    version = _version(kind, settings)
+
+    def family_market(market: str) -> str:
+        p = parse_props_market(market) if kind == "player" else None
+        return f"PROP_{p[1]}" if p else market
+
     evaluated = db.execute(select(func.count(NbaEvaluation.id)).where(NbaEvaluation.model_version == version)).scalar_one()
     settled = db.execute(select(NbaEvaluation).where(NbaEvaluation.is_win.isnot(None),
                                                       NbaEvaluation.model_version == version)).scalars().all()
-    comparisons = compare([EvaluationRow(e.game_id, e.market, float(e.model_probability),
+    comparisons = compare([EvaluationRow(e.game_id, family_market(e.market), float(e.model_probability),
                                          float(e.market_fair_probability), bool(e.is_win))
                            for e in settled if e.market_fair_probability is not None])
     value: dict[str, list[float]] = {}
     for e in settled:
         ev, odds = float(e.expected_value), float(e.best_odds)
         if settings.min_pick_ev <= ev <= settings.max_plausible_ev and settings.odds_min <= odds <= settings.odds_max:
-            value.setdefault(market_family(e.market), []).append(odds - 1 if e.is_win else -1.0)
+            value.setdefault(market_family(family_market(e.market)), []).append(odds - 1 if e.is_win else -1.0)
     return ModelVsMarketResponse(evaluated=evaluated, settled=len(settled), families=[
         ModelVsMarketFamily(
             family=c.family, n_matches=c.n_matches, n_markets=c.n_markets, brier_model=round(c.brier_model, 4),
@@ -242,4 +286,16 @@ def status(db: Session = Depends(get_db)):
         next_game_preseason=nxt.season_type == "PRESEASON" if nxt else False,
         regular_season_start_utc=season_start,
         regular_season_started=season_start is not None and season_start <= now, validation=validation,
+        props_validation=props_summary(), props_coverage=props_coverage(db),
     )
+
+
+def props_summary() -> dict | None:
+    """Lo que la página muestra de la validación del modelo de jugadores."""
+    model = load_props_model()
+    if model is None:
+        return None
+    v = model.get("validation", {})
+    return {"w_live": model.get("w_live", 0.0), "trained_at": model.get("trained_at"),
+            "test_seasons": v.get("test_seasons"), "outcomes": v.get("outcomes"),
+            "market": v.get("market")}

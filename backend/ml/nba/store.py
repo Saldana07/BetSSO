@@ -1,11 +1,13 @@
 """Guardado de equipos, partidos y cuotas de la NBA."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine
-from app.models import NBA_TABLES, NbaGame, NbaOdds, NbaTeam
+from app.models import NBA_TABLES, NbaGame, NbaOdds, NbaPlayer, NbaPlayerGame, NbaPropOdds, NbaTeam
+from ml.nba.player_sources import name_key
 
 BOX_FIELDS = ("pts", "fga", "fta", "oreb", "tov")
 
@@ -72,6 +74,59 @@ def store_odds(db: Session, game_id: str, source: str, rows: list[dict], recorde
                        selection=r["selection"], odds_value=r["odds"], snapshot=r["snapshot"],
                        recorded_at=recorded_at))
     return len(rows)
+
+
+def upsert_player_games(db: Session, rows: list[dict]) -> int:
+    """Jugadores y su estadística por partido, por lotes (26.000 filas por
+    temporada). Solo partidos que existen en nba_games."""
+    known = set(db.execute(select(NbaGame.id).where(NbaGame.id.in_({r["game_id"] for r in rows}))).scalars())
+    rows = [r for r in rows if r["game_id"] in known]
+    players = {r["player_id"]: r["player_name"] for r in rows}
+    for chunk in _chunks([{"id": pid, "name": n, "name_key": name_key(n)} for pid, n in players.items()], 2000):
+        stmt = insert(NbaPlayer).values(chunk)
+        db.execute(stmt.on_conflict_do_update(index_elements=["id"], set_={"name": stmt.excluded.name,
+                                                                            "name_key": stmt.excluded.name_key}))
+    cols = ("game_id", "player_id", "team_id", "minutes", "pts", "reb", "ast", "fg3m")
+    for chunk in _chunks([{c: r[c] for c in cols} for r in rows], 2000):
+        stmt = insert(NbaPlayerGame).values(chunk)
+        db.execute(stmt.on_conflict_do_update(index_elements=["game_id", "player_id"],
+                                              set_={c: getattr(stmt.excluded, c) for c in cols[2:]}))
+    return len(rows)
+
+
+def _chunks(items: list, n: int):
+    for i in range(0, len(items), n):
+        yield items[i:i + n]
+
+
+def store_props(db: Session, game_id: str, source: str, bookmaker: str, rows: list[dict], recorded_at: datetime,
+                replace_snapshots: tuple[str, ...] = ()) -> int:
+    """Líneas de jugadores (filas con player_name, player_id, stat, line, side, odds, snapshot)."""
+    if replace_snapshots:
+        db.execute(delete(NbaPropOdds).where(NbaPropOdds.game_id == game_id, NbaPropOdds.source == source,
+                                             NbaPropOdds.bookmaker == bookmaker,
+                                             NbaPropOdds.snapshot.in_(replace_snapshots)))
+    for r in rows:
+        db.add(NbaPropOdds(game_id=game_id, source=source, bookmaker=bookmaker, player_name=r["player_name"][:80],
+                           player_id=r.get("player_id"), stat=r["stat"], line=r["line"], side=r["side"],
+                           odds_value=r["odds"], snapshot=r["snapshot"], recorded_at=recorded_at))
+    return len(rows)
+
+
+def game_players(db: Session, game: NbaGame, recent_days: int = 400) -> dict[int, str]:
+    """Jugadores posibles de un partido: los que jugaron en él (si ya se jugó)
+    o los que jugaron con alguno de los dos equipos en el último año."""
+    rows = db.execute(select(NbaPlayer.id, NbaPlayer.name).join(NbaPlayerGame, NbaPlayerGame.player_id == NbaPlayer.id)
+                      .where(NbaPlayerGame.game_id == game.id)).all()
+    if rows:
+        return dict(rows)
+    since = game.game_date - timedelta(days=recent_days)
+    rows = db.execute(
+        select(NbaPlayer.id, NbaPlayer.name).join(NbaPlayerGame, NbaPlayerGame.player_id == NbaPlayer.id)
+        .join(NbaGame, NbaGame.id == NbaPlayerGame.game_id)
+        .where(NbaPlayerGame.team_id.in_((game.home_team_id, game.away_team_id)), NbaGame.game_date >= since)
+        .distinct()).all()
+    return dict(rows)
 
 
 def games_by_nicknames(db: Session, day) -> dict[tuple[str, str], NbaGame]:

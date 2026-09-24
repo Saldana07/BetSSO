@@ -165,12 +165,14 @@ def test_el_modelo_aprende_quien_es_mejor_sin_ver_el_futuro():
 
 
 def test_acciones_nba(tmp_path, monkeypatch):
-    from ml.nba import train
-    params = tmp_path / "params.json"
+    from ml.nba import props, train
+    params, props_path = tmp_path / "params.json", tmp_path / "props.json"
     monkeypatch.setattr(train, "PARAMS_PATH", params)
+    monkeypatch.setattr(props, "PROPS_PATH", props_path)
     steps = on_demand.steps_for("nba", date(2026, 10, 25))
-    assert [s.module for s in steps] == ["ml.nba.import_history", "ml.nba.train", "jobs.nba_update"]   # 1.ª vez: entrena
+    assert [s.module for s in steps] == ["ml.nba.import_history", "ml.nba.train", "ml.nba.props", "jobs.nba_update"]
     params.write_text("{}")
+    props_path.write_text("{}")
     steps = on_demand.steps_for("nba", date(2026, 10, 25))
     assert [s.module for s in steps] == ["ml.nba.import_history", "jobs.nba_update"]
     assert "--apisports" not in steps[-1].args

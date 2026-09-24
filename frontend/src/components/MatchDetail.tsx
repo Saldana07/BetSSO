@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { kickoffLong } from '../format'
+import { isNba, kickoffLong } from '../format'
 import type { PickOfTheDay, Scope } from '../types'
 import { Icon } from './Icon'
 import { MarketsTab } from './MarketsTab'
@@ -40,7 +40,7 @@ export function MatchDetail({ match, pick, scope = 'europa', onClose }: { match:
   }, [onClose])
 
   // Las lesiones (parte de ESPN) solo en la NBA; la simulación es del modelo de goles.
-  const nba = scope === 'nba'
+  const nba = isNba(scope)
   const tabs = TABS.filter((t) => (pick || t.id !== 'general') && (nba ? t.id !== 'simulation' : t.id !== 'injuries'))
 
   return (

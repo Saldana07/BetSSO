@@ -1,3 +1,4 @@
+import { isNba } from '../format'
 import type { DailyCandidate, MatchSummary, Scope } from '../types'
 import { ConfidenceBadge } from './ConfidenceBadge'
 import { Icon } from './Icon'
@@ -19,16 +20,18 @@ export function MatchList({ matches, scope, when, onOpen }: {
   return (
     <section aria-label={`Partidos de ${when}`} className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
-        <h3 className={heading}>{scope === 'nba' ? `Partidos de la NBA de ${when}` : `Partidos de ${when} con análisis`}</h3>
+        <h3 className={heading}>{isNba(scope) ? `Partidos de la NBA de ${when}` : `Partidos de ${when} con análisis`}</h3>
         <p className="m-0 text-[13px] text-faint">
-          {scope === 'nba'
+          {scope === 'nba_players'
+            ? 'Ábrelos para ver las líneas de jugadores evaluadas (puntos, rebotes, asistencias, triples y combinados).'
+            : scope === 'nba'
             ? 'Todos los del día; los que ya tienen líneas muestran sus mercados evaluados.'
             : 'Con historial suficiente y cuotas. Ábrelos para ver todos sus mercados, aunque no hayan pasado el filtro de picks.'}
         </p>
       </div>
       {matches.length === 0 ? (
         <p className="m-0 rounded-3xl border border-ink-600 bg-ink-850 px-6 py-5 text-sm text-muted">
-          {scope === 'nba' ? `No hay partidos de la NBA ${when}.` : `No hay partidos con datos suficientes ${when}.`}
+          {isNba(scope) ? `No hay partidos de la NBA ${when}.` : `No hay partidos con datos suficientes ${when}.`}
         </p>
       ) : (
         <ul className="m-0 flex list-none flex-col overflow-hidden rounded-3xl border border-ink-600 bg-ink-850 p-0">
@@ -45,7 +48,7 @@ export function MatchList({ matches, scope, when, onOpen }: {
                     {m.home_team} <span className="text-faint">vs</span> {m.away_team}
                   </span>
                   <span className="truncate text-xs text-muted">
-                    {m.league} · {m.n_markets} {m.n_markets === 1 ? 'mercado' : 'mercados'}
+                    {m.league} · {m.n_markets} {scope === 'nba_players' ? (m.n_markets === 1 ? 'línea' : 'líneas') : m.n_markets === 1 ? 'mercado' : 'mercados'}
                   </span>
                 </span>
                 <span className="flex items-center gap-3">
@@ -91,7 +94,10 @@ export function CandidatesTable({ candidates, when }: { candidates: DailyCandida
                   <span className="text-xs text-muted">{c.league}</span>
                 </td>
                 <td className="py-3.5 pr-4 text-fg-2">
-                  <span className="block">{formatSelection(c.market, c.selection, { home: c.home_team, away: c.away_team })}</span>
+                  <span className="block">
+                    {c.player && `${c.player} · `}
+                    {formatSelection(c.market, c.selection, { home: c.home_team, away: c.away_team })}
+                  </span>
                   <span className="text-xs text-muted">{formatMarket(c.market)}</span>
                 </td>
                 <td className="py-3.5 pr-4 text-right">

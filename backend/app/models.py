@@ -380,4 +380,48 @@ class NbaEvaluation(Base):
     game: Mapped["NbaGame"] = relationship()
 
 
-NBA_TABLES = [NbaTeam.__table__, NbaGame.__table__, NbaOdds.__table__, NbaPrediction.__table__, NbaEvaluation.__table__]
+class NbaPlayer(Base):
+    """Jugador de la NBA (PLAYER_ID de nba.com)."""
+    __tablename__ = "nba_players"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(String(80))
+    name_key: Mapped[str] = mapped_column(String(80), index=True)   # normalizado para emparejar con las casas
+
+
+class NbaPlayerGame(Base):
+    """Estadística de un jugador en un partido (registro de stats.nba.com)."""
+    __tablename__ = "nba_player_games"
+
+    game_id: Mapped[str] = mapped_column(ForeignKey("nba_games.id", ondelete="CASCADE"), primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("nba_players.id"), primary_key=True, index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("nba_teams.id"))
+    minutes: Mapped[float] = mapped_column(Numeric(5, 2))
+    pts: Mapped[int] = mapped_column(SmallInteger)
+    reb: Mapped[int] = mapped_column(SmallInteger)
+    ast: Mapped[int] = mapped_column(SmallInteger)
+    fg3m: Mapped[int] = mapped_column(SmallInteger)
+
+
+class NbaPropOdds(Base):
+    """Líneas de jugadores: más/menos de una estadística. `stat`: PTS, REB, AST,
+    FG3M o combinados PR, PA, RA, PRA. Los "hitos" (8+ puntos) se guardan como
+    OVER de la línea 7.5."""
+    __tablename__ = "nba_prop_odds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[str] = mapped_column(ForeignKey("nba_games.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(12))            # ESPN | APISPORTS
+    bookmaker: Mapped[str] = mapped_column(String(60))
+    player_name: Mapped[str] = mapped_column(String(80))
+    player_id: Mapped[int | None] = mapped_column(index=True)  # None si no se pudo emparejar
+    stat: Mapped[str] = mapped_column(String(5))
+    line: Mapped[float] = mapped_column(Numeric(5, 1))
+    side: Mapped[str] = mapped_column(String(5))               # OVER | UNDER
+    odds_value: Mapped[float] = mapped_column(Numeric(6, 3))
+    snapshot: Mapped[str] = mapped_column(String(8))           # OPEN | CLOSE | LIVE
+    recorded_at: Mapped[datetime] = mapped_column(TZ)
+
+
+NBA_TABLES = [NbaTeam.__table__, NbaGame.__table__, NbaOdds.__table__, NbaPrediction.__table__, NbaEvaluation.__table__,
+              NbaPlayer.__table__, NbaPlayerGame.__table__, NbaPropOdds.__table__]

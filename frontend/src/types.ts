@@ -29,6 +29,8 @@ export interface PickOfTheDay {
   closing_odds: number | null
   /** Cuota mínima a la que el pick sigue valiendo la pena, en cualquier casa. */
   min_odds: number | null
+  /** Líneas de jugadores de la NBA: a quién se refiere el pick. */
+  player?: string | null
 }
 
 export interface DailyCandidate extends PickOfTheDay {
@@ -118,6 +120,8 @@ export interface MarketRow {
   in_odds_range: boolean
   ev_suspicious: boolean
   is_pick: boolean
+  /** Líneas de jugadores de la NBA. */
+  player?: string | null
 }
 
 export interface MatchMarkets extends Omit<MatchSummary, 'n_markets' | 'has_pick'> {
@@ -193,7 +197,24 @@ export interface ModelVsMarket {
 }
 
 /** Apartado de la app: Europa (modelo validado) o fútbol colombiano (contador propio). */
-export type Scope = 'europa' | 'colombia' | 'nba'
+export type Scope = 'europa' | 'colombia' | 'nba' | 'nba_players'
+
+/** Validación del modelo de jugadores (models/nba/props.json). */
+export interface NbaPropsMarketTest {
+  n: number
+  games?: number
+  by_stat?: Record<string, { n: number; brier_model: number; brier_market: number; t: number | null }>
+  blend?: { w_first_half: number; test_brier_blend: number | null; test_brier_market: number | null }
+  betting_model?: { bets: number; roi: number | null; wins: number }
+}
+
+export interface NbaPropsValidation {
+  w_live: number
+  trained_at: string | null
+  test_seasons: string[] | null
+  outcomes: Record<string, { n: number; mae_model: number; mae_last10: number; brier: number }> | null
+  market: Partial<Record<'CLOSE' | 'OPEN', NbaPropsMarketTest>> | null
+}
 
 /** Apartado NBA: datos, calendario y la validación del modelo contra las líneas de cierre. */
 export interface NbaValidationPart {
@@ -247,6 +268,8 @@ export interface NbaStatus {
   regular_season_start_utc: string | null
   regular_season_started: boolean
   validation: NbaValidation | null
+  props_validation: NbaPropsValidation | null
+  props_coverage: { lines: number; games: number; since: string | null } | null
 }
 
 export interface ColombiaStatus {

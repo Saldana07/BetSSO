@@ -1374,6 +1374,53 @@ horas; "Cuotas Betano / Pinnacle" gasta la cuota de baloncesto (1 por día +
 primera vez importa el historial (~15.000 partidos y ~6.000 cierres de ESPN,
 reanudable) y entrena el modelo. La pretemporada no genera picks.
 
+### Líneas de jugadores (a prueba desde el 20/10/2026)
+
+Cuarta pestaña, "NBA · jugadores", con contador propio
+(`nba_props_model_version = "nba-props-v1"`): puntos, rebotes, asistencias,
+triples y los combinados (pts+reb, pts+ast, reb+ast, pts+reb+ast). Los
+endpoints de `/api/nba/...` aceptan `?kind=player`; el mercado se guarda como
+`P{id del jugador}_{estadística}_{línea}` (p. ej. `P1629029_PRA_45.5`). Si el
+jugador no juega, el pick se anula (ni gana ni pierde, fuera del contador).
+
+**Datos (gratis):** estadística por partido de cada jugador desde 2021-22
+(`leaguegamelog` de jugadores de stats.nba.com, 1 petición por temporada y
+tipo, tablas `nba_players` y `nba_player_games`); líneas de jugadores de
+ESPN (DraftKings, apertura y cierre) desde los playoffs de 2026, que es
+cuando ESPN empezó a guardarlas (antes da 404), en `nba_prop_odds`. En vivo
+también se guardan las líneas de jugadores de Betano, Bet365... que traiga la
+respuesta de `/odds` de API-Basketball que ya se pide para los mercados de
+equipo (**sin consultas extra**). Ese formato no se ha podido ver para la NBA
+hasta que haya partidos: el lector (`parse_apisports_props`) acepta las
+variantes conocidas y cuenta lo que no entiende ("líneas de jugadores: N (M
+sin entender)" en el resultado de "Cuotas Betano / Pinnacle"). **En la
+pretemporada (desde el 3/10) hay que mirar ese número**: si M es alto, el
+formato es otro y hay que ajustar el lector antes del 20/10.
+
+**Modelo (`ml/nba/props.py`).** Esperado = minutos esperados (media
+exponencial, vida media 3 partidos) × producción por minuto (vida media 15)
+× ritmo del partido (del modelo de equipos) × defensa del rival (solo puntos
+y triples), con reparto binomial negativo (dispersión medida por
+estadística). Solo usa partidos anteriores (test que lo verifica).
+
+**Validación (24/09/2026):** contra resultados en 2024-25 y 2025-26 la
+proyección se equivoca menos que el promedio de los últimos 10 partidos en
+todo (puntos 4.61 contra 4.72, rebotes 1.90 contra 1.96, asistencias 1.34
+contra 1.38, triples 0.93 contra 0.96). Pero contra las **9.161 líneas reales
+de cierre de DraftKings** de 83 partidos de playoffs 2026, la casa predice
+mejor (Brier 0.2470 contra 0.2588, t = 4.8), y apostar con el modelo da ROI
+-5.8% en 3.368 apuestas. A apertura: +1.9% en 3.427 apuestas y una mezcla
+con peso 0.1 que casi no mejora a la casa (0.2471 contra 0.2475): no alcanza
+para fiarse. Por eso el peso en vivo es **w = 0**: los picks de jugadores solo
+salen cuando Betano o Bwin pagan más de lo que Pinnacle (o la mediana de las
+demás casas) considera justo en esa misma línea. Nunca de un jugador en el
+parte de lesiones ("Fuera" o en duda) ni de uno traspasado hace menos de 3
+partidos; como máximo un pick por partido y por jugador. Las evaluaciones
+guardan la probabilidad del modelo, así que "Modelo contra la casa" lo sigue
+midiendo con cada partido. `python -m ml.nba.props` reentrena y valida
+(`--reusar-ajuste` solo repite la validación); resultado en
+`models/nba/props.json`.
+
 ## Interfaz "Boleto nocturno"
 
 Tablero oscuro (un solo tema) con barra lateral: los tres apartados con su

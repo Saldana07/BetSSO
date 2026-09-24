@@ -1,4 +1,4 @@
-import { resetTime } from '../format'
+import { isNba as isNbaScope, resetTime } from '../format'
 import type { ActionEstimates, ActionName, Scope } from '../types'
 import type { Actions } from '../useActions'
 import { Icon, type IconName } from './Icon'
@@ -38,7 +38,7 @@ function timeAgo(iso: string): string {
 /** Los botones que gastan consultas, cada uno con lo que costaría ahora. */
 export function ActionBar({ scope, actions }: { scope: Scope; actions: Actions }) {
   const { status, estimates, error, autoStarted, latest, run } = actions
-  const isNba = scope === 'nba'
+  const isNba = isNbaScope(scope)
   const buttons = isNba ? NBA : FOOTBALL
   const running = status?.running ?? null
   const q = status ? (isNba ? status.quota_basketball : status.quota) : null

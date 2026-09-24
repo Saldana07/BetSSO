@@ -14,6 +14,14 @@ const FAMILY_LABELS: Record<string, string> = {
   ML: 'Ganador (NBA)',
   SPREAD: 'Hándicap de puntos',
   TOTAL: 'Total de puntos',
+  PROP_PTS: 'Puntos (jugador)',
+  PROP_REB: 'Rebotes (jugador)',
+  PROP_AST: 'Asistencias (jugador)',
+  PROP_FG3M: 'Triples (jugador)',
+  PROP_PR: 'Puntos + rebotes',
+  PROP_PA: 'Puntos + asistencias',
+  PROP_RA: 'Rebotes + asistencias',
+  PROP_PRA: 'Puntos + rebotes + asistencias',
 }
 
 const VERDICTS: Record<string, { label: string; className: string }> = {

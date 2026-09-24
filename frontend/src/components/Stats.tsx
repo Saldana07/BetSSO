@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { isNba } from '../format'
 import { MIN_PICKS_FOR_SIGNIFICANCE, type Performance, type Scope } from '../types'
 import { Icon } from './Icon'
 
@@ -66,7 +67,7 @@ export function KpiStrip({ performance }: { performance: Performance }) {
   )
 }
 
-const SECTION_NAME: Record<Scope, string> = { europa: 'Europa', colombia: 'Colombia', nba: 'NBA' }
+const SECTION_NAME: Record<Scope, string> = { europa: 'Europa', colombia: 'Colombia', nba: 'NBA', nba_players: 'NBA jugadores' }
 
 /** Contador del apartado cuando todavía no hay picks liquidados. */
 export function CounterCard({ scope, performance }: { scope: Scope; performance: Performance | null }) {
@@ -80,7 +81,7 @@ export function CounterCard({ scope, performance }: { scope: Scope; performance:
           <span className="text-[13px] text-muted">liquidados</span>
         </div>
         <div className="flex flex-col gap-1">
-          <span className={`font-mono text-4xl leading-none font-semibold ${pending > 0 ? (scope === 'nba' ? 'text-sky' : 'text-lime') : ''}`}>
+          <span className={`font-mono text-4xl leading-none font-semibold ${pending > 0 ? (isNba(scope) ? 'text-sky' : 'text-lime') : ''}`}>
             {pending}
           </span>
           <span className="text-[13px] text-muted">pendientes</span>

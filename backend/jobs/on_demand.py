@@ -105,9 +105,12 @@ def steps_for(action: str, today: date) -> list[Step]:
             Step("Liquidando lo que llegó", "jobs.settle_predictions"),
         ]
     if action in NBA_ACTIONS:
+        from ml.nba.props import PROPS_PATH
         from ml.nba.train import PARAMS_PATH
         train = [] if PARAMS_PATH.exists() else [
             Step("Entrenando y validando el modelo NBA (solo la primera vez, ~15 min)", "ml.nba.train")]
+        if not PROPS_PATH.exists():
+            train.append(Step("Entrenando y validando el modelo de jugadores (solo la primera vez)", "ml.nba.props"))
         return [
             Step("Historial de la NBA (solo lo que falte)", "ml.nba.import_history", fatal=False),
             *train,

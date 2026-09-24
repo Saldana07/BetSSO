@@ -95,7 +95,10 @@ class Ratings:
         pts_h = poss * (self.league_ortg + h.off + a.dfn) / 100 + home_adv / 2 - fatigue / 2
         pts_a = poss * (self.league_ortg + a.off + h.dfn) / 100 - home_adv / 2 + fatigue / 2
         return {"margin": pts_h - pts_a, "total": pts_h + pts_a, "poss": poss,
-                "home_games": h.games, "away_games": a.games}
+                "home_games": h.games, "away_games": a.games,
+                # Para el modelo de jugadores (ml/nba/props.py): ritmo y defensa de cada lado.
+                "home_pace": h.pace, "away_pace": a.pace, "home_dfn": h.dfn, "away_dfn": a.dfn,
+                "league_ortg": self.league_ortg, "league_pace": self.league_pace}
 
     def update(self, home_id: int, away_id: int, season: str, day: pd.Timestamp,
                home_pts: float, away_pts: float, poss: float | None, neutral: bool = False) -> None:
