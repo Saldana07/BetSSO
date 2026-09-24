@@ -1,8 +1,8 @@
 """Acciones bajo demanda: lo único que gasta cuota de API-Football.
 
 Nada corre solo (no hay tareas programadas). La página lanza "actualizar"
-al abrirse, una vez por cuota diaria, y el resto con sus botones; daily.bat
-y settle.bat las lanzan a mano.
+la primera vez que se abre cada mañana (desde AUTO_UPDATE_HOUR, hora de
+Colombia) y el resto con sus botones; daily.bat y settle.bat las lanzan a mano.
 
   actualizar  partidos, cuotas y picks de hoy y mañana (~2 + 1 por partido con historial)
   cuotas      cuotas de los partidos de las próximas 12 h y sus picks (1 por partido)
@@ -29,10 +29,12 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import MarketEvaluation, Match, NbaOdds, Odds, Prediction
 from jobs.fetch_match_data import (
     DAILY_MARKER, _pending_clause, candidate_matches, daily_flow_done, request_budget,
@@ -200,11 +202,40 @@ def acquire_lock() -> bool:
         return False
 
 
-def update_due(today: date) -> bool:
-    """¿Toca la actualización automática al abrir la página? Una vez por día
-    de cuota (UTC), aunque haya fallado: reintentar en cada visita gastaría
-    la cuota a ciegas."""
-    return not daily_flow_done(today) and read_state().get("auto_attempted") != today.isoformat()
+def _parse_moment(value) -> datetime | None:
+    """Fecha y hora con zona de un campo del estado; lo que no lo sea (el
+    formato viejo de `auto_attempted` era solo la fecha) no cuenta."""
+    try:
+        moment = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo else None
+
+
+def morning_start(now: datetime) -> datetime:
+    """Hoy a la hora de la actualización automática, en hora local."""
+    settings = get_settings()
+    local = now.astimezone(ZoneInfo(settings.local_timezone))
+    return local.replace(hour=settings.auto_update_hour, minute=0, second=0, microsecond=0)
+
+
+def update_due(now: datetime) -> bool:
+    """¿Toca la actualización automática al abrir la página? Una vez cada
+    mañana: desde AUTO_UPDATE_HOUR (hora local) si desde esa hora de hoy no se
+    ha actualizado el día (a mano o sola), aunque la última haya fallado:
+    reintentar en cada visita gastaría la cuota a ciegas.
+
+    La cuota se renueva a las 19:00 de Colombia; con esto las consultas del día
+    se gastan por la mañana, no al renovarse (antes la página actualizaba la
+    primera vez que se abría después de las 19:00)."""
+    start = morning_start(now)
+    if now < start:
+        return False
+    state = read_state()
+    moments = [_parse_moment((state.get("last") or {}).get("actualizar", {}).get("finished_at")),
+               _parse_moment(state.get("auto_attempted"))]
+    moments = [m for m in moments if m is not None]
+    return not moments or max(moments) < start
 
 
 def nba_update_due(now: datetime) -> bool:

@@ -19,9 +19,10 @@ export interface Actions {
 }
 
 /** Consultas a la API y las acciones que las gastan. Nada se consulta solo,
- *  salvo la actualización del día la primera vez que se abre la página tras
- *  renovarse la cuota (19:00 en Colombia) y, en la NBA, su actualización
- *  gratuita si pasaron 3 horas. Solo se sondea el estado mientras algo corre. */
+ *  salvo la actualización del día la primera vez que se abre la página cada
+ *  mañana (desde las 6:00, AUTO_UPDATE_HOUR en backend/.env) y, en la NBA, su
+ *  actualización gratuita si pasaron 3 horas. Solo se sondea el estado
+ *  mientras algo corre. */
 export function useActions(scope: Scope, onFinished: () => void): Actions {
   const isNba = scope === 'nba'
   const [status, setStatus] = useState<ActionStatus | null>(null)

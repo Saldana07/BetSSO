@@ -283,8 +283,10 @@ export interface ActionStatus {
   quota_basketball: { used: number; limit: number; breakdown: Record<string, number> }
   running: ActionRun | null
   last: Partial<Record<ActionName, ActionResult>>
-  /** Primera visita desde que se renovó la cuota: toca actualizar el día. */
+  /** Primera visita de la mañana (desde `auto_update_hour`): toca actualizar el día. */
   update_due: boolean
+  /** Hora local desde la que la página actualiza el día sola (6 = 6:00 a. m.). */
+  auto_update_hour: number
   /** La actualización NBA (gratis) toca: la última fue hace más de 3 horas. */
   nba_update_due: boolean
   titles: Record<ActionName, string>

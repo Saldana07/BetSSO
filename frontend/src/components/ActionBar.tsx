@@ -8,7 +8,7 @@ type Button = { action: ActionName; label: string; icon: IconName; help: string;
 const FOOTBALL: Button[] = [
   { action: 'verificar', label: 'Verificar resultados', icon: 'shield', help: 'Trae el resultado y las estadísticas de los partidos con picks y los liquida.' },
   { action: 'cuotas', label: 'Refrescar cuotas', icon: 'trend', help: 'Cuotas nuevas de los partidos de las próximas 12 h (las de más de 3 h) y rehace sus picks.' },
-  { action: 'actualizar', label: 'Actualizar el día', icon: 'download', help: 'Partidos y cuotas de hoy y mañana y sus picks. Se hace sola la primera vez que abres la página tras renovarse la cuota.' },
+  { action: 'actualizar', label: 'Actualizar el día', icon: 'download', help: 'Partidos y cuotas de hoy y mañana y sus picks. Se hace sola la primera vez que abres la página cada mañana.' },
   { action: 'completar', label: 'Completar datos', icon: 'layers', help: 'Con lo que sobre de la cuota (deja reserva): resultados para "Modelo contra la casa" e historial colombiano.' },
 ]
 
@@ -92,7 +92,7 @@ export function ActionBar({ scope, actions }: { scope: Scope; actions: Actions }
       {running && (
         <p role="status" className="flex items-center gap-2.5 text-sm text-lime">
           <span className="size-2 animate-pulse rounded-full bg-lime" />
-          {autoStarted && running.action === 'actualizar' && 'Primera visita desde que se renovó la cuota: '}
+          {autoStarted && running.action === 'actualizar' && 'Actualización de la mañana: '}
           {autoStarted && running.action === 'nba' && 'Actualización automática (gratis): '}
           {running.title}
           {running.step_index > 0 && ` · paso ${running.step_index} de ${running.steps}: ${running.step}`}

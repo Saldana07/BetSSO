@@ -1279,9 +1279,14 @@ archivos que las registraban (`register_task.ps1`, `run_hidden.vbs`,
 | Completar datos | medición "Modelo vs casa", historial colombiano, árbitros, huecos del histórico | lo que sobre, dejando reserva |
 
 "Actualizar el día" es lo único automático, y solo **al abrir la página**: la
-primera visita tras renovarse la cuota (00:00 UTC = 19:00 en Colombia) la
-lanza una vez; si falla no se reintenta en cada visita (`auto_attempted` en
-`data/actions_state.json`). Cada botón muestra antes cuánto gastaría
+primera visita de cada mañana (desde las 6:00 de Colombia, `AUTO_UPDATE_HOUR`
+en `backend/.env`) la lanza una vez; si falla no se reintenta en cada visita
+(`auto_attempted` en `data/actions_state.json`), y sin consultas no se lanza.
+La cuota de API-Sports se renueva a las 00:00 UTC = 19:00 en Colombia para
+todos los planes y eso no se puede mover; hasta el 24/09 la página
+actualizaba en la primera visita tras esa hora, lo que gastaba las consultas
+del día por la noche. Ahora se gastan por la mañana, cuando se preparan las
+apuestas del día (la tarde-noche aún puede usar «Refrescar cuotas»). Cada botón muestra antes cuánto gastaría
 (`GET /api/actions/estimates`) y pide confirmación si pasa de 15.
 
 **Cómo corre.** `POST /api/actions/{acción}` lanza `python -m

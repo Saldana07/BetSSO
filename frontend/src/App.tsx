@@ -69,7 +69,7 @@ function emptyBody(scope: Scope, offset: DayOffset, minConfidence: ConfidenceLev
   if (scope === 'nba')
     return 'Un pick de la NBA necesita que Betano o Bwin paguen más de lo justo (con «Cuotas Betano / Pinnacle»). Si no hay, es que el mercado está bien puesto: en la NBA pasa casi siempre.'
   if (offset === 1)
-    return 'Las cuotas de mañana aún no están o ningún mercado validado tiene ventaja. Se traen con «Actualizar el día», que se hace sola al abrir la página tras renovarse la cuota.'
+    return 'Las cuotas de mañana aún no están o ningún mercado validado tiene ventaja. Se traen con «Actualizar el día», que se hace sola la primera vez que abres la página cada mañana.'
   return `Ningún partido de ${dayLabel(offset)} tiene equipos con historial suficiente y una cuota con ventaja creíble. El sistema prefiere no recomendar antes que recomendar a ciegas.`
 }
 

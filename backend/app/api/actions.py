@@ -14,6 +14,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.database import get_db
 from jobs import on_demand
 from ml.ingestion import api_usage
@@ -42,7 +43,8 @@ def _status() -> dict:
         },
         "running": on_demand.current_run(),
         "last": state.get("last") or {},
-        "update_due": on_demand.update_due(now.date()),
+        "update_due": on_demand.update_due(now),
+        "auto_update_hour": get_settings().auto_update_hour,
         "nba_update_due": on_demand.nba_update_due(now),
         "titles": on_demand.TITLES,
     }
@@ -66,8 +68,12 @@ def launch(action: Action, auto: bool = Query(False, description="Actualización
         today = datetime.now(timezone.utc).date()
         if auto:
             if action == "actualizar":
-                if not on_demand.update_due(today):
-                    return {"started": False, "reason": "La actualización de hoy ya se hizo."}
+                if not on_demand.update_due(datetime.now(timezone.utc)):
+                    return {"started": False, "reason": "La actualización de esta mañana ya se hizo."}
+                # Sin consultas no se lanza (ni se marca como intentada): queda
+                # pendiente para la próxima visita con cuota.
+                if api_usage.used_today() >= api_usage.DAILY_LIMIT:
+                    return {"started": False, "reason": "Sin consultas de fútbol hasta las 19:00."}
             elif action == "nba":
                 if not on_demand.nba_update_due(datetime.now(timezone.utc)):
                     return {"started": False, "reason": "La NBA se actualizó hace menos de 3 horas."}
@@ -77,7 +83,7 @@ def launch(action: Action, auto: bool = Query(False, description="Actualización
         if running or on_demand.lock_held():
             raise HTTPException(409, f"Ya está corriendo: {running['title'] if running else 'otra acción'}.")
         if auto and action == "actualizar":
-            on_demand.update_state(auto_attempted=today.isoformat())
+            on_demand.update_state(auto_attempted=datetime.now(timezone.utc).isoformat())
         elif auto:
             on_demand.update_state(nba_auto_attempted=datetime.now(timezone.utc).isoformat())
         proc = subprocess.Popen(

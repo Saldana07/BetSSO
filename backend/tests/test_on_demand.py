@@ -2,6 +2,7 @@
 import subprocess
 import sys
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -44,14 +45,26 @@ def test_accion_desconocida():
         on_demand.steps_for("borrar", date(2026, 9, 24))
 
 
-def test_actualizacion_automatica_una_vez_por_dia_aunque_falle(sandbox):
-    today = date(2026, 9, 24)
-    assert on_demand.update_due(today)
-    on_demand.update_state(auto_attempted=today.isoformat())
-    assert not on_demand.update_due(today)                     # ya se intentó hoy: no reintenta en cada visita
-    assert on_demand.update_due(date(2026, 9, 25))             # nueva cuota, nuevo intento
-    (sandbox / ".daily_done").write_text("2026-09-25")
-    assert not on_demand.update_due(date(2026, 9, 25))         # hecha a mano: tampoco
+def _bogota(day: int, hour: int, minute: int = 0) -> datetime:
+    return datetime(2026, 9, day, hour, minute, tzinfo=ZoneInfo("America/Bogota"))
+
+
+def test_actualizacion_automatica_por_la_manana_una_vez(sandbox):
+    # Desde las 6:00 de Colombia; antes no (tampoco a las 20:00 recién renovada la cuota).
+    assert not on_demand.update_due(_bogota(24, 5, 59))
+    assert on_demand.update_due(_bogota(24, 6, 0))
+    on_demand.update_state(auto_attempted=_bogota(24, 7, 30).isoformat())
+    assert not on_demand.update_due(_bogota(24, 9, 0))         # ya se intentó esta mañana, aunque falle
+    assert not on_demand.update_due(_bogota(24, 20, 0))        # la cuota se renueva a las 19:00: no se gasta ahí
+    assert not on_demand.update_due(_bogota(25, 1, 0))         # madrugada: aún no es la mañana
+    assert on_demand.update_due(_bogota(25, 6, 30))            # mañana siguiente, sí
+
+
+def test_actualizacion_a_mano_cuenta_como_la_de_la_manana(sandbox):
+    on_demand.update_state(last={"actualizar": {"finished_at": _bogota(24, 6, 45).isoformat()}})
+    assert not on_demand.update_due(_bogota(24, 10, 0))
+    on_demand.update_state(auto_attempted="2026-09-24")        # formato viejo (solo fecha): no cuenta
+    assert on_demand.update_due(_bogota(25, 8, 0))
 
 
 def test_candado(sandbox):
