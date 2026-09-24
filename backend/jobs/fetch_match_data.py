@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import League, MarketEvaluation, Match, Prediction
 from ml.features.count_stats import (
-    COVERED_COUNTRIES, DIVISION_COUNTRY, SPI_SOURCE_TAG, competition_country, default_resolver,
+    COVERED_COUNTRIES, DIVISION_COUNTRY, SPI_SOURCE_TAG, _load_raw, competition_country, default_resolver,
 )
 from ml.features.colombia import COLOMBIA_DIVISIONS
 from ml.ingestion.api_football_client import APIFootballClient, APIFootballError
@@ -42,11 +42,15 @@ from ml.ingestion.mappers import upsert_match
 
 DAILY_MARKER = Path(__file__).resolve().parents[1] / ".daily_done"
 RESERVE_BEFORE_DAILY = 70   # el flujo diario usa ~40-75 en fin de semana
-RESERVE_AFTER_DAILY = 5     # margen para pruebas manuales
+RESERVE_AFTER_DAILY = 10    # margen para consultas manuales y el paso de Colombia
 FINISHED_AFTER = timedelta(hours=2, minutes=30)   # desde el inicio hasta que suele haber estadísticas
 RETRY_AFTER = timedelta(hours=6)                  # si la API aún no las tenía
 RETRY_WINDOW = timedelta(days=4)                  # después, se asume que nunca las tendrá
-FRESHNESS_WINDOW = timedelta(days=21)             # prioridad 3: solo partidos recientes
+FRESHNESS_WINDOW = timedelta(days=21)             # prioridad 4: solo partidos recientes
+# Colombia: el modelo usa los últimos ~20 partidos de cada equipo; pedir las
+# estadísticas de 2022-2024 (~1,000 partidos) costaría semanas de cuota para
+# casi nada. Solo desde esta fecha.
+COLOMBIA_STATS_SINCE = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
 
 def daily_flow_done(today: date) -> bool:
@@ -91,13 +95,18 @@ def candidate_matches(db: Session, now: datetime) -> list[tuple[int, Match]]:
     # Prioridad 3: historial colombiano, lo más reciente primero.
     colombia = db.execute(
         select(Match).join(League, Match.league_id == League.id)
-        .where(pending, League.api_league_id.in_(COLOMBIA_DIVISIONS))
+        .where(pending, League.api_league_id.in_(COLOMBIA_DIVISIONS), Match.kickoff_utc >= COLOMBIA_STATS_SINCE)
         .order_by(Match.kickoff_utc.desc())
     ).scalars().all()
 
     # Prioridad 4: partidos de liga de las divisiones del histórico (ambos
     # equipos emparejados, misma división actual, del país de la liga).
     resolver = default_resolver()
+    # Lo que el histórico (espejo + copias de football-data) ya tiene no hace
+    # falta pedirlo a la API: solo partidos posteriores a su último día en
+    # cada división (antes eran ~700 partidos en cola, casi todos ya cubiertos).
+    raw = _load_raw()
+    covered_until = raw.groupby("Division")["MatchDate"].max()
     tier3 = []
     for m in db.execute(
         select(Match).join(League, Match.league_id == League.id)
@@ -110,8 +119,13 @@ def candidate_matches(db: Session, now: datetime) -> list[tuple[int, Match]]:
         if hk is None or ak is None:
             continue
         div = resolver.last_division[hk]
-        if resolver.last_division[ak] == div and DIVISION_COUNTRY.get(div) == country:
-            tier3.append(m)
+        if resolver.last_division[ak] != div or DIVISION_COUNTRY.get(div) != country:
+            continue
+        last = covered_until.get(div)
+        match_day = m.kickoff_utc.astimezone(timezone.utc).replace(tzinfo=None)
+        if last is not None and match_day.date() <= last.date():
+            continue
+        tier3.append(m)
 
     seen: set[int] = set()
     out: list[tuple[int, Match]] = []

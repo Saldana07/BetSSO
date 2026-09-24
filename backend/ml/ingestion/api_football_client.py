@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import httpx
 
 from app.core.config import get_settings
+from ml.ingestion import api_usage
 
 BASE_URL = "https://v3.football.api-sports.io"
 # El límite por minuto del plan Free es 10 req/min; esperar algo más de un
@@ -84,6 +85,7 @@ class APIFootballClient:
         last_error: Exception | None = None
         for attempt in range(max_retries):
             response = self._client.get(endpoint, params=params or {})
+            api_usage.record(endpoint, params)   # contador local exacto (ver api_usage.py)
             self._update_rate_limit(response.headers)
 
             if response.status_code == 429:
@@ -222,9 +224,23 @@ class APIFootballClient:
         return out
 
     def quota(self) -> tuple[int, int]:
-        """(peticiones usadas hoy, límite diario). /status no gasta cuota."""
-        req = self.get_status().get("requests") or {}
-        return int(req.get("current", 0)), int(req.get("limit_day", 100))
+        """(peticiones usadas hoy, límite diario). /status no gasta cuota, pero
+        su contador va con retraso (marcó 42 con las 100 gastadas): se toma el
+        mayor entre él, el registro local y lo que dicen las cabeceras de la
+        última respuesta."""
+        try:
+            req = self.get_status().get("requests") or {}
+        except APIFootballError as exc:
+            # Con la cuota agotada, /status también responde con error: antes eso
+            # tumbaba el cálculo de presupuesto y la liquidación no llegaba a correr.
+            if "limit" in str(exc).lower():
+                return 100, 100
+            req = {}
+        limit = int(req.get("limit_day", 100))
+        used = max(int(req.get("current", 0)), api_usage.used_today())
+        if self.rate_limit.per_day_remaining is not None:
+            used = max(used, limit - self.rate_limit.per_day_remaining)
+        return used, limit
 
     def get_fixture_corners(self, fixture_id: int) -> tuple[int, int] | None:
         """Compatibilidad: (córners local, córners visitante) asumiendo el orden de la API."""
