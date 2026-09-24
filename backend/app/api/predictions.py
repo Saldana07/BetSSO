@@ -18,6 +18,7 @@ from app.schemas import (
     MatchSummary,
     ModelVsMarketFamily,
     ModelVsMarketResponse,
+    ModelWeight,
     OutcomeProbs,
     PerformanceResponse,
     PickOfTheDayResponse,
@@ -30,6 +31,7 @@ from ml.simulation.monte_carlo import compare_with, simulate_match
 from ml.value_betting.confidence import SkillEvidence, confidence_label
 from ml.value_betting.ev_kelly import closing_line_value
 from ml.features.colombia import is_colombian
+from ml.value_betting.blend import load_live_weights
 from ml.value_betting.model_vs_market import EvaluationRow, compare, market_family
 from ml.value_betting.settlement import COUNT_MARKET_STATS
 
@@ -442,6 +444,7 @@ def get_model_vs_market(scope: Scope = _SCOPE_QUERY, db: Session = Depends(get_d
                 and settings.odds_min <= odds <= settings.odds_max):
             value.setdefault(market_family(e.market), []).append(odds - 1 if e.is_win else -1.0)
 
+    weights = load_live_weights(db, settings, version)
     families = []
     for c in comparisons:
         pnl = value.get(c.family, [])
@@ -450,8 +453,15 @@ def get_model_vs_market(scope: Scope = _SCOPE_QUERY, db: Session = Depends(get_d
             brier_model=round(c.brier_model, 4), brier_market=round(c.brier_market, 4),
             t_stat=round(c.t_stat, 2) if c.t_stat is not None else None, verdict=c.verdict,
             value_bets=len(pnl), value_bets_won=sum(1 for x in pnl if x > 0), value_bets_pnl=round(sum(pnl), 2),
+            weight=round(weights.by_family.get(c.family, weights.default), 2),
+            weight_source=weights.source.get(c.family, "conjunto"),
         ))
-    return ModelVsMarketResponse(evaluated=evaluated, settled=len(settled_rows), families=families)
+    p = weights.pooled
+    model_weight = ModelWeight(value=round(weights.default, 2), raw=round(p.w, 2),
+                               t_stat=round(p.t, 2) if p.t is not None else None, n_matches=p.n_matches,
+                               borrowed=weights.borrowed)
+    return ModelVsMarketResponse(evaluated=evaluated, settled=len(settled_rows), families=families,
+                                 model_weight=model_weight)
 
 
 @router.get("/performance", response_model=PerformanceResponse)

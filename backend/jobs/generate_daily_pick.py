@@ -8,7 +8,9 @@ Flujo:
   1. Carga partidos del día (ya ingeridos por ml/ingestion/fetch_data.py)
   2. Calcula features (Elo, Poisson/xG, forma ponderada) por partido
   3. Genera probabilidades por mercado (modelo calibrado + Poisson)
-  4. Cruza contra cuotas actuales -> EV y Kelly fraccional
+  4. Cruza contra cuotas actuales -> EV y Kelly fraccional, con la
+     probabilidad mezclada con la de la casa según el peso que los resultados
+     le dan al modelo (ml/value_betting/blend.py)
   5. Filtra por [odds_min, odds_max] y accuracy histórica del backtest
   6. Marca is_pick_of_day=True en el top N (settings.top_picks_count) por EV,
      tomando como máximo UN candidato por partido (para no llenar el top 5
@@ -25,6 +27,7 @@ from app.models import BacktestResult, MarketEvaluation, Match, Odds, Prediction
 from jobs.market_evaluation import evaluate_match
 from ml.features.colombia import is_colombian
 from ml.features.count_stats import ALL_SPECS
+from ml.value_betting.blend import LiveWeights, load_live_weights
 from ml.value_betting.confidence import SkillEvidence
 
 settings = get_settings()
@@ -109,6 +112,18 @@ def _latest_odds(db: Session, match_id: int, market: str) -> list[Odds]:
     return list(db.execute(stmt).scalars().all())
 
 
+def describe_weights(w: LiveWeights) -> str:
+    """"peso del modelo 0.36 (57 partidos, t = 1.0); 1X2: 0 (la casa predice mejor)"."""
+    p = w.pooled
+    head = (f"peso del modelo sobre la casa {w.default:.2f} "
+            + ("(prestado de Europa: sin muestra propia)" if w.borrowed
+               else f"({p.n_matches} partidos liquidados, t = {p.t:.1f})" if p.t is not None
+               else f"({p.n_matches} partidos liquidados)"))
+    notes = [f"{fam}: {w.by_family[fam]:.2f} ({'la casa predice mejor' if src == 'casa' else 'medido aparte'})"
+             for fam, src in sorted(w.source.items()) if src != "conjunto"]
+    return head + ("; " + "; ".join(notes) if notes else "")
+
+
 def _select_top(candidates: list[Prediction], n: int) -> list[Prediction]:
     """Como máximo un candidato por partido (el de mayor EV de ese partido),
     para que el top N muestre partidos distintos en vez de varios mercados
@@ -168,6 +183,9 @@ def run(model_probabilities_fn, day: date | None = None, scope: str | None = Non
             return evidence_cache[(version, market)]
 
         skipped_no_history = 0
+        weights = {v: load_live_weights(db, settings, v) for v in (settings.model_version, settings.colombia_model_version)}
+        for label, v in (("Europa", settings.model_version), ("Colombia", settings.colombia_model_version)):
+            print(f"{label}: {describe_weights(weights[v])}")
 
         for match in matches:
             probabilities = model_probabilities_fn(match)
@@ -197,6 +215,7 @@ def run(model_probabilities_fn, day: date | None = None, scope: str | None = Non
                 # Colombia aún no tiene backtest propio: sus picks son
                 # experimentales y su contador aparte es la validación.
                 require_validation=not colombian,
+                weight_for_market=weights[version].weight,
             )
             db.add_all(result.evaluations)
             db.add_all(result.candidates)

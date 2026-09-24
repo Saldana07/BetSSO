@@ -161,7 +161,7 @@ export function PickTicket({ pick, scope, rank, variant = 'hero', onOpen }: {
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Metric label="Ventaja (EV)" value={ev} accent />
-          <Metric label="Prob. del modelo" value={pct(pick.model_probability)} />
+          <Metric label="Prob. estimada" value={pct(pick.model_probability)} />
           <Metric label="Prob. de la cuota" value={pct(pick.implied_probability)} />
           {lastMetric && <Metric label={lastMetric.label} value={lastMetric.value} />}
         </div>
@@ -169,7 +169,7 @@ export function PickTicket({ pick, scope, rank, variant = 'hero', onOpen }: {
         {big && (
           <div className="flex flex-col gap-2.5">
             {[
-              { label: 'Modelo', value: pick.model_probability, bar: 'bg-lime' },
+              { label: 'Estimada', value: pick.model_probability, bar: 'bg-lime' },
               { label: pick.bookmaker ? `Cuota de ${pick.bookmaker}` : 'Cuota', value: pick.implied_probability, bar: 'bg-[#6b7686]' },
             ].map((r) => (
               <div key={r.label} className="grid grid-cols-[8.5rem_minmax(0,1fr)_3.5rem] items-center gap-3.5 text-[13px]">
@@ -193,7 +193,7 @@ export function PickTicket({ pick, scope, rank, variant = 'hero', onOpen }: {
                 ? 'Línea de jugador, a prueba: se mide contra lo que las demás casas consideran justo en esa misma línea. Su contador aparte dirá si sirve.'
                 : scope === 'nba'
                 ? 'Pick de la NBA: nace de que esta casa pague más que la cuota justa de Pinnacle, no de la opinión del modelo. Su contador aparte dirá si sirve.'
-                : 'Modelo propio del fútbol colombiano, aún sin validar: este pick es una prueba. Su contador aparte dirá si sirve.'}
+                : 'Modelo propio del fútbol colombiano, aún sin validar: su probabilidad se mezcla con la de las demás casas y este pick es una prueba. Su contador aparte dirá si sirve.'}
             </span>
           </div>
         )}
@@ -202,6 +202,9 @@ export function PickTicket({ pick, scope, rank, variant = 'hero', onOpen }: {
           <div className="flex flex-col gap-1 text-xs text-faint">
             {pick.kelly_fraction !== null && pick.kelly_fraction > 0 && (
               <span>Stake sugerido (¼ de Kelly): {(pick.kelly_fraction * 100).toFixed(1)}% del bank</span>
+            )}
+            {(scope === 'europa' || scope === 'colombia') && (
+              <span>Estimada = lo que pagan justo las demás casas, corrida hacia el modelo solo lo que los resultados le respaldan.</span>
             )}
             {scope === 'europa' && (
               <span>

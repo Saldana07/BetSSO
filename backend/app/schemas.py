@@ -165,12 +165,25 @@ class ModelVsMarketFamily(BaseModel):
     value_bets: int
     value_bets_won: int
     value_bets_pnl: float
+    # Peso del modelo sobre la casa con el que se deciden los picks de esta
+    # familia (ml/value_betting/blend.py); None donde no aplica (NBA).
+    weight: float | None = None
+    weight_source: str | None = None    # propio | conjunto | casa
+
+
+class ModelWeight(BaseModel):
+    value: float                # peso conjunto recortado a [0, 1]
+    raw: float                  # estimación sin recortar
+    t_stat: float | None
+    n_matches: int
+    borrowed: bool              # sin muestra propia: usa el de Europa
 
 
 class ModelVsMarketResponse(BaseModel):
     evaluated: int              # mercados evaluados guardados (liquidados o no)
     settled: int
     families: list[ModelVsMarketFamily]
+    model_weight: ModelWeight | None = None
 
 
 class ColombiaStatus(BaseModel):

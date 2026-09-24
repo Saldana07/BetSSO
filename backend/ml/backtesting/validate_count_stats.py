@@ -12,15 +12,23 @@ que pasó. Responde tres preguntas, en orden de importancia:
   2. ¿Está calibrado? Cuando dice 60%, ¿acierta ~60%? Sin esto el EV/Kelly
      no significan nada.
   3. ¿Cuánto? Persiste la accuracy en backtest_results SOLO para las líneas
-     donde el modelo supera la tasa base en Brier Y en accuracy. Las demás
-     quedan sin fila -> SIN_VALIDAR -> el job no las apuesta. Persistir una
-     línea desbalanceada (casi siempre Under) haría que el sistema la
-     etiquetara como alta confianza por una ilusión estadística.
+     donde el modelo supera la tasa base en Brier Y en accuracy, las dos con
+     al menos 2 errores estándar (comparación partido a partido). Las demás
+     quedan sin fila -> SIN_VALIDAR -> el job no las apuesta; su fila de una
+     validación anterior se borra. Persistir una línea desbalanceada (casi
+     siempre Under) o una "mejora" de 0.07 puntos haría que el sistema la
+     etiquetara como validada por una ilusión estadística.
+
+Sin fuga: el calibrador guardado en models/ se reajusta con TODO (incluido
+este periodo de prueba), así que aquí se usa uno ajustado solo con lo
+anterior a --since. El ajuste por el desequilibrio del mercado (2 números,
+solo tarjetas) sí es el guardado: su capacidad de sobreajuste es mínima.
 
 Uso:
     python -m ml.backtesting.validate_count_stats --since 2025-09-01 [--stat shots] [--persist]
 """
 import argparse
+import math
 from datetime import datetime, timezone
 
 import numpy as np
@@ -28,13 +36,22 @@ import pandas as pd
 
 from ml.features.count_stats import ALL_SPECS, SPECS_BY_KEY, CountStatModel, StatSpec
 
-MIN_BRIER_GAIN = 0.0005  # por debajo de esto la "mejora" es ruido
+T_REQUIRED = 2.0   # errores estándar: por debajo, la "mejora" puede ser ruido
+
+
+def paired_t(diffs: np.ndarray) -> float:
+    """Media de las diferencias partido a partido / su error estándar."""
+    sd = diffs.std(ddof=1)
+    return float(diffs.mean() / (sd / math.sqrt(len(diffs)))) if len(diffs) > 1 and sd > 0 else 0.0
 
 
 def run(spec: StatSpec, since: str, max_matches: int) -> dict:
     from ml.features.market_adjustment import MarketAdjustment
+    from ml.training.calibrate_count_stats import FIT_START, fit_calibrators, walk_forward_predictions
 
-    model = CountStatModel(spec)
+    model = CountStatModel(spec, calibration_path=None)
+    if pd.Timestamp(since) > pd.Timestamp(FIT_START):
+        model.calibrators = fit_calibrators(walk_forward_predictions(model, FIT_START, since), spec)
     market = MarketAdjustment.load()   # misma tubería que producción
     df = model.df
     test = df[df["MatchDate"] >= pd.Timestamp(since)].head(max_matches)
@@ -55,7 +72,7 @@ def run(spec: StatSpec, since: str, max_matches: int) -> dict:
     res = pd.DataFrame(rows)
     print(f"\n===== {spec.label} ({spec.market_prefix}) =====")
     print(f"Partidos evaluados: {len(res)} (de {len(test)} candidatos; el resto sin historial suficiente)")
-    print(f"Calibración isotónica: {'aplicada' if model.calibrators else 'NO (probabilidades crudas)'}\n")
+    print(f"Calibración isotónica: {f'ajustada con {FIT_START} -> {since}' if model.calibrators else 'NO (probabilidades crudas)'}\n")
 
     summary = {}
     for line in spec.lines:
@@ -63,15 +80,19 @@ def run(spec: StatSpec, since: str, max_matches: int) -> dict:
         y = res[f"over_{line}"].values
         base_rate = y.mean()
 
-        model_acc = ((p > 0.5) == y).mean()
-        base_acc = max(base_rate, 1 - base_rate)          # predecir siempre la clase mayoritaria
+        majority = float(base_rate >= 0.5)
+        correct_model = ((p > 0.5) == y).astype(float)
+        correct_base = (y == majority).astype(float)       # predecir siempre la clase mayoritaria
+        model_acc, base_acc = correct_model.mean(), correct_base.mean()
         model_brier = np.mean((p - y) ** 2)
         base_brier = np.mean((base_rate - y) ** 2)         # predecir siempre la tasa base
-        validated = model_acc > base_acc and model_brier < base_brier - MIN_BRIER_GAIN
+        t_acc = paired_t(correct_model - correct_base)
+        t_brier = paired_t((p - y) ** 2 - (base_rate - y) ** 2)
+        validated = t_acc >= T_REQUIRED and t_brier <= -T_REQUIRED
 
         print(f"--- Línea {line} (tasa base Over = {base_rate:.3f}) -> {'VALIDADA' if validated else 'no validada'} ---")
-        print(f"  Accuracy: modelo {model_acc:.3f}  vs  base {base_acc:.3f}   -> {'MEJOR' if model_acc > base_acc else 'NO mejora'}")
-        print(f"  Brier:    modelo {model_brier:.4f}  vs  base {base_brier:.4f}   -> {'MEJOR' if model_brier < base_brier else 'NO mejora'}")
+        print(f"  Accuracy: modelo {model_acc:.3f}  vs  base {base_acc:.3f}   (t = {t_acc:+.1f})")
+        print(f"  Brier:    modelo {model_brier:.4f}  vs  base {base_brier:.4f}   (t = {t_brier:+.1f})")
 
         bins = pd.cut(p, bins=[0, 0.3, 0.4, 0.5, 0.6, 0.7, 1.0], include_lowest=True)
         calib = pd.DataFrame({"p": p, "y": y, "bin": bins}).groupby("bin", observed=True).agg(pred=("p", "mean"), real=("y", "mean"), n=("y", "size"))
@@ -81,16 +102,22 @@ def run(spec: StatSpec, since: str, max_matches: int) -> dict:
 
         summary[spec.market(line)] = {"n": len(res), "accuracy": float(model_acc), "brier": float(model_brier),
                                       "base_accuracy": float(base_acc), "base_brier": float(base_brier),
-                                      "validated": validated}
+                                      "t_accuracy": t_acc, "t_brier": t_brier, "validated": validated}
     return summary
 
 
 def persist(summary: dict, since: str):
+    from sqlalchemy import delete
+
     from app.database import SessionLocal
     from app.models import BacktestResult
 
     db = SessionLocal()
     try:
+        # Una línea que dejó de validarse no puede seguir apostándose por su
+        # fila vieja (el job usa la más reciente de cada mercado).
+        db.execute(delete(BacktestResult).where(BacktestResult.model_version == "v1",
+                                                BacktestResult.market.in_(list(summary))))
         n = 0
         for market, s in summary.items():
             if not s["validated"]:

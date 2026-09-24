@@ -188,12 +188,24 @@ export interface ModelVsMarketFamily {
   value_bets: number
   value_bets_won: number
   value_bets_pnl: number
+  /** Peso del modelo sobre la casa en los picks de esta familia (fútbol). */
+  weight?: number | null
+  weight_source?: 'propio' | 'conjunto' | 'casa' | null
+}
+
+export interface ModelWeight {
+  value: number
+  raw: number
+  t_stat: number | null
+  n_matches: number
+  borrowed: boolean
 }
 
 export interface ModelVsMarket {
   evaluated: number
   settled: number
   families: ModelVsMarketFamily[]
+  model_weight?: ModelWeight | null
 }
 
 /** Apartado de la app: Europa (modelo validado) o fútbol colombiano (contador propio). */

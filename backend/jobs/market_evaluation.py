@@ -13,6 +13,7 @@ from datetime import datetime
 from app.core.config import Settings
 from app.models import Match, MarketEvaluation, Odds, Prediction
 from ml.value_betting.confidence import SkillEvidence
+from ml.value_betting.blend import blended_probability
 from ml.value_betting.ev_kelly import evaluate_bet, is_safe_bet_candidate
 from ml.value_betting.market import fair_probabilities
 
@@ -21,6 +22,30 @@ def validation_label(skill: float | None, settings: Settings) -> str:
     if skill is None:
         return "SIN_VALIDAR"
     return "VALIDADO" if skill >= settings.min_historical_skill else "SIN_VENTAJA"
+
+
+# Doble oportunidad: sus selecciones se solapan (no hay "precio justo" propio);
+# su referencia sale del 1X2 de las mismas casas.
+DOUBLE_CHANCE_FROM_1X2 = {"1X": ("HOME", "DRAW"), "X2": ("DRAW", "AWAY"), "12": ("HOME", "AWAY")}
+
+
+def _by_bookmaker(odds_rows: list[Odds]) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, float]] = {}
+    for o in odds_rows:
+        out.setdefault(o.bookmaker, {})[o.selection] = float(o.odds_value)
+    return out
+
+
+def reference_probabilities(market: str, by_bookmaker: dict[str, dict[str, float]], exclude: str | None,
+                            odds_for_market: Callable[[str], list[Odds]]) -> dict[str, float]:
+    """Probabilidad sin margen de cada selección según las casas distintas de
+    `exclude` (la que paga el pick: nunca se compara una casa consigo misma)."""
+    if market == "DOUBLE_CHANCE":
+        onextwo = {b: s for b, s in _by_bookmaker(odds_for_market("1X2")).items() if b != exclude}
+        fair, _ = fair_probabilities("1X2", onextwo)
+        return {sel: sum(fair[p] for p in parts) for sel, parts in DOUBLE_CHANCE_FROM_1X2.items()} if fair else {}
+    fair, _ = fair_probabilities(market, {b: s for b, s in by_bookmaker.items() if b != exclude})
+    return fair
 
 
 @dataclass
@@ -39,10 +64,18 @@ def evaluate_match(
     now: datetime,
     model_version: str | None = None,
     require_validation: bool = True,
+    weight_for_market: Callable[[str], float] | None = None,
 ) -> MatchEvaluation:
     """`model_version`: la de Europa por defecto; Colombia usa la suya.
     `require_validation=False` solo para los picks EXPERIMENTALES de Colombia
-    (sin backtest propio todavía; su contador aparte es su validación)."""
+    (sin backtest propio todavía; su contador aparte es su validación).
+
+    `weight_for_market`: cuánto creerle al modelo sobre la casa en ese mercado
+    (ml/value_betting/blend.py). Los picks se deciden con
+    p = casa + w · (modelo - casa), donde "casa" es la probabilidad sin margen
+    de las DEMÁS casas (no la que paga el pick). Las evaluaciones guardan la
+    probabilidad y el EV del MODELO: así se lo sigue midiendo contra la casa.
+    Sin `weight_for_market` (relleno de evaluaciones) se usa el modelo tal cual."""
     model_version = model_version or settings.model_version
     evaluations: list[MarketEvaluation] = []
     candidates: list[Prediction] = []
@@ -53,9 +86,7 @@ def evaluate_match(
             continue
         evidence = evidence_for_market(market)
 
-        by_bookmaker: dict[str, dict[str, float]] = {}
-        for o in odds_rows:
-            by_bookmaker.setdefault(o.bookmaker, {})[o.selection] = float(o.odds_value)
+        by_bookmaker = _by_bookmaker(odds_rows)
         fair, n_bookmakers = fair_probabilities(market, by_bookmaker)
 
         # Mejor cuota por selección entre las casas donde se puede apostar: es
@@ -74,6 +105,12 @@ def evaluate_match(
                 continue
             odds = float(o.odds_value)
             bet = evaluate_bet(model_prob, odds, settings.kelly_fraction_cap)
+            if weight_for_market is None:
+                pick_prob, pick = model_prob, bet
+            else:
+                reference = reference_probabilities(market, by_bookmaker, o.bookmaker, odds_for_market)
+                pick_prob = blended_probability(reference.get(selection), model_prob, weight_for_market(market))
+                pick = evaluate_bet(pick_prob, odds, settings.kelly_fraction_cap) if pick_prob is not None else None
 
             evaluations.append(MarketEvaluation(
                 match_id=match.id,
@@ -90,9 +127,9 @@ def evaluate_match(
                 evaluated_at=now,
             ))
 
-            if not is_safe_bet_candidate(
+            if pick is None or not is_safe_bet_candidate(
                 odds=odds,
-                expected_val=bet.expected_value,
+                expected_val=pick.expected_value,
                 historical_skill=evidence.skill,
                 odds_min=settings.odds_min,
                 odds_max=settings.odds_max,
@@ -108,12 +145,12 @@ def evaluate_match(
                 model_version=model_version,
                 market=market,
                 selection=selection,
-                model_probability=model_prob,
+                model_probability=pick_prob,     # la que decidió el pick (mezcla con la casa)
                 bookmaker=o.bookmaker,
                 bookmaker_odds=odds,
-                implied_probability=bet.implied_probability,
-                expected_value=bet.expected_value,
-                kelly_fraction=bet.kelly_fraction,
+                implied_probability=pick.implied_probability,
+                expected_value=pick.expected_value,
+                kelly_fraction=pick.kelly_fraction,
                 historical_accuracy=evidence.accuracy,
                 historical_skill=evidence.skill,
                 backtest_n_bets=evidence.n_bets,

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ModelVsMarket as ModelVsMarketData, ModelVsMarketFamily } from '../types'
+import type { ModelVsMarket as ModelVsMarketData, ModelVsMarketFamily, ModelWeight } from '../types'
 
 const FAMILY_LABELS: Record<string, string> = {
   SHOTS: 'Tiros',
@@ -55,8 +55,14 @@ function Family({ f }: { f: ModelVsMarketFamily }) {
           error <span className="font-mono text-fg">{f.brier_model.toFixed(3)}</span> vs{' '}
           <span className="font-mono text-fg">{f.brier_market.toFixed(3)}</span>
         </span>
+        {f.weight != null && (
+          <span title="Cuánto se corre la probabilidad de la casa hacia la del modelo al decidir un pick">
+            peso en los picks <span className="font-mono text-fg">{f.weight.toFixed(2).replace('.', ',')}</span>
+            {f.weight_source === 'propio' ? ' (medido aparte)' : ''}
+          </span>
+        )}
         {f.value_bets > 0 && (
-          <span title="Todas las apuestas que el sistema consideraba con ventaja, a 1 unidad">
+          <span title="Todas las apuestas en las que el modelo solo (sin mezclar con la casa) veía ventaja, a 1 unidad">
             "valor": {f.value_bets_won}/{f.value_bets} ·{' '}
             <span className={`font-mono ${f.value_bets_pnl >= 0 ? 'text-win' : 'text-loss'}`}>
               {f.value_bets_pnl >= 0 ? '+' : '−'}
@@ -66,6 +72,25 @@ function Family({ f }: { f: ModelVsMarketFamily }) {
         )}
       </div>
     </li>
+  )
+}
+
+/** Con qué peso entra el modelo en los picks: p = casa + peso · (modelo − casa). */
+function WeightNote({ w }: { w: ModelWeight }) {
+  const value = w.value.toFixed(2).replace('.', ',')
+  return (
+    <div className="flex flex-col gap-1 rounded-2xl border border-ink-600 px-4 py-3.5 text-[13px] leading-relaxed text-fg-2">
+      <span>
+        Peso del modelo en los picks: <span className="font-mono text-lg font-semibold text-lime">{value}</span>
+      </span>
+      <span className="text-pretty text-muted">
+        {w.borrowed
+          ? 'Sin partidos propios suficientes: usa el que miden los resultados de Europa.'
+          : `Medido con ${w.n_matches} partidos liquidados${w.t_stat !== null ? ` (t = ${w.t_stat.toFixed(1).replace('.', ',')})` : ''}. `}
+        {!w.borrowed &&
+          'La probabilidad de un pick es la de las demás casas corrida hacia el modelo en esa proporción; 0 = solo la casa, 1 = solo el modelo. Se recalcula con cada partido liquidado; donde la casa acierta más, es 0.'}
+      </span>
+    </div>
   )
 }
 
@@ -91,6 +116,7 @@ export function ModelVsMarket({ data }: { data: ModelVsMarketData }) {
           <Family key={f.family} f={f} />
         ))}
       </ul>
+      {data.model_weight && <WeightNote w={data.model_weight} />}
       <p className="m-0 text-[13px] leading-relaxed text-pretty text-faint">
         Error del modelo contra la probabilidad de las casas sin su margen. Hay veredicto con 30 partidos liquidados y una
         diferencia de al menos 2 errores estándar.

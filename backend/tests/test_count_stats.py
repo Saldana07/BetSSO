@@ -186,3 +186,15 @@ def _resolver():
 )
 def test_resolver_de_nombres(name, country, expected):
     assert _resolver().resolve(name, country) == expected
+
+
+def test_validacion_exige_mejora_significativa():
+    """Una "mejora" de 0.07 puntos en 7,700 partidos es ruido: no valida."""
+    import numpy as np
+
+    from ml.backtesting.validate_count_stats import T_REQUIRED, paired_t
+    rng = np.random.default_rng(0)
+    ruido = rng.choice([-1.0, 0.0, 1.0], size=7700, p=[0.05, 0.9007, 0.0493])
+    assert abs(paired_t(ruido)) < T_REQUIRED
+    real = rng.choice([-1.0, 0.0, 1.0], size=7700, p=[0.05, 0.85, 0.10])
+    assert paired_t(real) > T_REQUIRED

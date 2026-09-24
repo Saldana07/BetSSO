@@ -1436,6 +1436,53 @@ lateral pasa a una barra superior con los apartados. Horas y fechas en
 formato de Colombia ("7:30 p. m."), y las selecciones nombran al equipo
 ("Empate o Millonarios").
 
+## Picks mezclados con la casa y validación sin fuga (auditoría del 24/09)
+
+Una auditoría encontró dos fallos en cómo el fútbol decidía sus picks.
+
+**1. La ventaja era la discrepancia cruda del modelo.** El EV salía de la
+probabilidad del modelo contra la cuota, y el ranking por EV elegía justo
+los partidos donde el modelo más discrepa de la casa, que son sobre todo sus
+errores. Mientras tanto, "Modelo contra la casa" no mostraba ninguna familia
+en la que el modelo acierte más (1X2: la casa, t = 2.6; el resto, empate o
+poca muestra). Ahora ([blend.py](backend/ml/value_betting/blend.py)):
+
+    p = casa + w · (modelo - casa)
+
+"casa" = probabilidad sin margen de las **demás** casas en esa línea (nunca
+la que paga el pick; la doble oportunidad sale del 1X2). w se mide con todos
+los mercados liquidados: resultado - casa = w · (modelo - casa), error
+estándar agrupado por partido. Un peso conjunto (con pocos partidos, uno por
+familia es ruido), recortado a [0, 1]; 0 donde la casa acierta más (1X2);
+su propio peso la familia que lo tenga significativo con 30+ partidos.
+Colombia usa el de Europa hasta tener muestra propia. Primer valor: **w =
+0.36** (57 partidos, t = 1.0). Las evaluaciones siguen guardando la
+probabilidad del MODELO (así se lo sigue midiendo); los picks guardan la
+mezclada, que la página llama "Prob. estimada". El peso se ve en la tarjeta
+"Modelo contra la casa" y en el registro de cada actualización.
+
+**2. La validación que habilita mercados tenía fuga y no pedía
+significancia.** El calibrador isotónico guardado se reajusta con todo el
+periodo, incluido el de prueba (desde 2025-09-01), y
+[validate_count_stats.py](backend/ml/backtesting/validate_count_stats.py)
+medía con él: medía sobre lo que el calibrador ya había visto. Además
+bastaba con superar a la tasa base por cualquier margen: tarjetas 5.5 pasaba
+con 71.76% contra 71.69% (+0.07 puntos, ruido) y dio 5 de los primeros 15
+picks. Ahora la validación usa un calibrador ajustado solo con lo anterior a
+la prueba, exige accuracy y Brier mejores con t >= 2 (partido a partido), y
+una línea que deja de validarse pierde su fila vieja. Resultado: siguen
+tiros (9 líneas), faltas (9), tarjetas 3.5 y 4.5, tiros a puerta 8.5 y 9.5;
+salen córners 9.5 (Brier t = -1.7), tarjetas 2.5/5.5/6.5 y tiros a puerta
+6.5/10.5.
+
+Con las dos cosas, sobre los 57 partidos ya medidos habrían salido 7 picks
+(antes 34): menos picks, y con una ventaja que los resultados respaldan.
+Ninguna de las dos cifras de ganancia se distingue todavía del azar.
+
+**Corrección a la auditoría:** recomendaba pedir 20 partidos por consulta
+(`/fixtures?ids=`); el plan gratuito no lo permite ("Free plans do not have
+access"), como ya estaba anotado arriba. No se cambió.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
@@ -1446,10 +1493,10 @@ formato de Colombia ("7:30 p. m."), y las selecciones nombran al equipo
 - BTTS y Over/Under de goles: no generan picks porque el backtest con cuotas
   reales dio yield negativo. Solo entrarían con datos que el mercado no
   pondere bien (alineaciones, xG en vivo).
-- Cuando "Modelo vs casa" tenga veredicto en tiros/tarjetas/faltas: si la
-  casa acierta más, bloquear ese mercado; si hay empate, mezclar la
-  probabilidad del modelo con la de la casa (el peso se ajusta con esas
-  mismas evaluaciones) en vez de apostar la del modelo sola.
+- ~~Mezclar la probabilidad del modelo con la de la casa~~: hecho el 24/09
+  (ver "Picks mezclados con la casa"). Pendiente: que cada familia tenga
+  muestra para su propio peso (hoy tiros, tarjetas y tiros a puerta tienen
+  10-16 partidos liquidados).
 - Reglas de tarjetas por casa: unas cuentan solo amarillas, otras "puntos".
   Elegir la cuota más alta entre casas puede elegir otra regla (EV fantasma).
 - Migraciones Alembic; hoy son `ALTER TABLE` a mano y `schema.sql` puede
