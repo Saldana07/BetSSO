@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { kickoffLong } from '../format'
 import type { PickOfTheDay, Scope } from '../types'
+import { Icon } from './Icon'
 import { MarketsTab } from './MarketsTab'
 import { NbaInjuries } from './NbaInjuries'
-import { PickOfTheDayCard } from './PickOfTheDayCard'
+import { PickTicket } from './PickTicket'
 import { SimulationTab } from './SimulationTab'
 
 export interface MatchRef {
@@ -37,49 +39,47 @@ export function MatchDetail({ match, pick, scope = 'europa', onClose }: { match:
     }
   }, [onClose])
 
-  // La simulación de Montecarlo es del modelo de goles: en la NBA no aplica.
-  // Las lesiones (parte de ESPN) solo en la NBA.
+  // Las lesiones (parte de ESPN) solo en la NBA; la simulación es del modelo de goles.
   const nba = scope === 'nba'
   const tabs = TABS.filter((t) => (pick || t.id !== 'general') && (nba ? t.id !== 'simulation' : t.id !== 'injuries'))
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/60 p-4 pt-10 sm:pt-16" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-3 pt-8 backdrop-blur-sm sm:p-6 sm:pt-14" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
-        className="w-full max-w-3xl rounded-2xl bg-white shadow-xl dark:bg-slate-900"
+        aria-label={`${match.home_team} vs ${match.away_team}`}
+        className="w-full max-w-3xl rounded-3xl border border-ink-500 bg-ink-900 shadow-[0_40px_80px_-30px_rgba(0,0,0,0.9)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="border-b border-slate-200 px-5 pt-4 dark:border-slate-700">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-indigo-600 dark:text-indigo-400">{match.league}</p>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">
-                {match.home_team} vs {match.away_team}
+        <div className="border-b border-ink-600 px-6 pt-6">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <span className={`text-xs font-semibold tracking-[0.12em] uppercase ${nba ? 'text-sky' : 'text-lime'}`}>{match.league}</span>
+              <h2 className="m-0 font-display text-2xl font-extrabold tracking-tight sm:text-[28px]">
+                {match.home_team} <span className="text-faint">vs</span> {match.away_team}
               </h2>
-              <p className="text-xs capitalize text-slate-500 dark:text-slate-400">
-                {new Date(match.kickoff_utc).toLocaleString('es', { weekday: 'long', hour: '2-digit', minute: '2-digit' })}
-              </p>
+              <span className="text-[13px] text-muted">{kickoffLong(match.kickoff_utc)}</span>
             </div>
             <button
+              type="button"
               onClick={onClose}
               aria-label="Cerrar"
-              className="rounded-md px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              className="flex size-11 items-center justify-center rounded-xl text-muted transition-colors hover:bg-ink-800 hover:text-fg"
             >
-              ✕
+              <Icon name="x" size={20} />
             </button>
           </div>
-          <div role="tablist" className="flex gap-1 overflow-x-auto">
+          <div role="tablist" className="flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {tabs.map((t) => (
               <button
                 key={t.id}
+                type="button"
                 role="tab"
                 aria-selected={tab === t.id}
                 onClick={() => setTab(t.id)}
-                className={`-mb-px whitespace-nowrap border-b-2 px-3 pb-3 text-sm font-medium transition-colors ${
-                  tab === t.id
-                    ? 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
-                    : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                className={`-mb-px min-h-11 border-b-2 px-3 text-sm font-medium whitespace-nowrap transition-colors ${
+                  tab === t.id ? 'border-lime text-fg' : 'border-transparent text-muted hover:text-fg'
                 }`}
               >
                 {t.label}
@@ -88,9 +88,9 @@ export function MatchDetail({ match, pick, scope = 'europa', onClose }: { match:
           </div>
         </div>
 
-        <div className="p-5">
+        <div className="p-5 sm:p-6">
           {tab === 'markets' && <MarketsTab matchId={match.match_id} scope={scope} />}
-          {tab === 'general' && pick && <PickOfTheDayCard pick={pick} />}
+          {tab === 'general' && pick && <PickTicket pick={pick} scope={scope} variant="detail" />}
           {tab === 'simulation' && <SimulationTab matchId={match.match_id} />}
           {tab === 'injuries' && <NbaInjuries matchId={match.match_id} />}
         </div>

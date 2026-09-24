@@ -11,16 +11,17 @@ import {
   getTopPicks,
   localDay,
 } from './api'
-import { CandidateRow } from './components/CandidateRow'
-import { ConfidenceFilter } from './components/ConfidenceFilter'
-import { DataPanel } from './components/DataPanel'
-import { DaySelector, dayLabel, type DayOffset } from './components/DaySelector'
+import { ActionBar } from './components/ActionBar'
+import { ConfidenceFilter, DayTabs } from './components/Controls'
+import { Icon } from './components/Icon'
 import { MatchDetail, type MatchRef } from './components/MatchDetail'
+import { CandidatesTable, MatchList } from './components/MatchList'
 import { ModelVsMarket } from './components/ModelVsMarket'
-import { NbaBanner } from './components/NbaBanner'
-import { PerformanceBar } from './components/PerformanceBar'
-import { PickOfTheDayCard } from './components/PickOfTheDayCard'
-import { ColombiaBanner, SectionSelector } from './components/SectionSelector'
+import { PickTicket } from './components/PickTicket'
+import { EmptyPicks, TomorrowCard } from './components/PicksExtras'
+import { ColombiaCard, NbaDataCard, NbaSeasonCard, NbaValidationCard } from './components/Sections'
+import { MobileTopBar, Sidebar, type SectionMeta } from './components/Sidebar'
+import { CounterCard, KpiStrip } from './components/Stats'
 import type {
   ColombiaStatus,
   ConfidenceLevel,
@@ -32,6 +33,8 @@ import type {
   PickOfTheDay,
   Scope,
 } from './types'
+import { useActions } from './useActions'
+import { dayDate, dayLabel, dayTitle, type DayOffset } from './format'
 
 type PicksState =
   | { status: 'loading' }
@@ -40,6 +43,35 @@ type PicksState =
   | { status: 'ready'; picks: PickOfTheDay[] }
 
 type Selected = { match: MatchRef; pick?: PickOfTheDay }
+
+const SCOPES: Scope[] = ['europa', 'colombia', 'nba']
+
+const EYEBROW: Record<Scope, string> = {
+  europa: 'Europa · mercados validados',
+  colombia: 'Fútbol colombiano · contador propio',
+  nba: 'NBA · experimental · contador propio',
+}
+
+const PICKS_HEADING: Record<Scope, string> = { europa: 'Picks', colombia: 'Picks Colombia', nba: 'Picks NBA' }
+
+function emptyTitle(scope: Scope, offset: DayOffset, minConfidence: ConfidenceLevel | null): string {
+  const when = dayLabel(offset)
+  if (minConfidence) return `No hay picks con confianza ${minConfidence.toLowerCase()} o mayor ${when}`
+  const day = dayTitle(offset)
+  if (offset === -1) return scope === 'europa' ? 'Ayer no hubo apuesta segura' : 'Ayer no hubo picks'
+  if (scope === 'colombia') return `${day} no hay picks colombianos`
+  if (scope === 'nba') return `${day} no hay picks de la NBA`
+  return `${day} no hay apuesta segura`
+}
+
+function emptyBody(scope: Scope, offset: DayOffset, minConfidence: ConfidenceLevel | null): string {
+  if (minConfidence) return 'Prueba bajando el filtro de confianza, o vuelve cuando haya más mercados con backtest validado.'
+  if (scope === 'nba')
+    return 'Un pick de la NBA necesita que Betano o Bwin paguen más de lo justo (con «Cuotas Betano / Pinnacle»). Si no hay, es que el mercado está bien puesto: en la NBA pasa casi siempre.'
+  if (offset === 1)
+    return 'Las cuotas de mañana aún no están o ningún mercado validado tiene ventaja. Se traen con «Actualizar el día», que se hace sola al abrir la página tras renovarse la cuota.'
+  return `Ningún partido de ${dayLabel(offset)} tiene equipos con historial suficiente y una cuota con ventaja creíble. El sistema prefiere no recomendar antes que recomendar a ciegas.`
+}
 
 function App() {
   const [scope, setScope] = useState<Scope>(() => {
@@ -53,22 +85,27 @@ function App() {
   const [picksState, setPicksState] = useState<PicksState>({ status: 'loading' })
   const [candidates, setCandidates] = useState<DailyCandidate[]>([])
   const [matches, setMatches] = useState<MatchSummary[]>([])
-  const [performance, setPerformance] = useState<Performance | null>(null)
+  const [performances, setPerformances] = useState<Record<Scope, Performance | null>>({ europa: null, colombia: null, nba: null })
   const [modelVsMarket, setModelVsMarket] = useState<ModelVsMarketData | null>(null)
+  const [tomorrowPick, setTomorrowPick] = useState<PickOfTheDay | null>(null)
   const [selected, setSelected] = useState<Selected | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Estable: DataPanel la usa en sus efectos (una función nueva en cada render
-  // los relanzaría).
+  // Estable: los efectos de las acciones la usan (una función nueva en cada
+  // render los relanzaría).
   const reload = useCallback(() => setRefreshKey((k) => k + 1), [])
+  const actions = useActions(scope, reload)
 
   const day = localDay(dayOffset)
   const when = dayLabel(dayOffset)
+  // En Colombia y la NBA todos los picks son experimentales (confianza baja):
+  // el filtro de confianza solo tiene sentido en Europa.
+  const confidence = scope === 'europa' ? minConfidence ?? undefined : undefined
 
   useEffect(() => {
     setPicksState({ status: 'loading' })
 
-    getTopPicks(minConfidence ?? undefined, day, scope)
+    getTopPicks(confidence, day, scope)
       .then((picks) => setPicksState({ status: 'ready', picks }))
       .catch((err) => {
         if (err instanceof ApiError && err.status === 404) {
@@ -78,33 +115,38 @@ function App() {
         }
       })
 
-    getDailyCandidates(minConfidence ?? undefined, day, scope)
+    getDailyCandidates(confidence, day, scope)
       .then(setCandidates)
       .catch(() => setCandidates([]))
 
-    getPerformance(scope)
-      .then(setPerformance)
-      .catch(() => setPerformance(null))
+    // Los tres contadores: el lateral muestra el de cada apartado.
+    Promise.all(SCOPES.map((s) => getPerformance(s).catch(() => null))).then(([europa, colombia, nba]) =>
+      setPerformances({ europa, colombia, nba }),
+    )
 
     getModelVsMarket(scope)
       .then(setModelVsMarket)
       .catch(() => setModelVsMarket(null))
 
-    if (scope === 'colombia') {
-      getColombiaStatus()
-        .then(setColombiaStatus)
-        .catch(() => setColombiaStatus(null))
-    }
-    if (scope === 'nba') {
-      getNbaStatus()
-        .then(setNbaStatus)
-        .catch(() => setNbaStatus(null))
-    }
+    getColombiaStatus()
+      .then(setColombiaStatus)
+      .catch(() => setColombiaStatus(null))
+    getNbaStatus()
+      .then(setNbaStatus)
+      .catch(() => setNbaStatus(null))
 
     getTodaysMatches(day, scope)
       .then(setMatches)
       .catch(() => setMatches([]))
-  }, [refreshKey, minConfidence, day, scope])
+
+    if (dayOffset === 0) {
+      getTopPicks(undefined, localDay(1), scope)
+        .then((picks) => setTomorrowPick(picks[0] ?? null))
+        .catch(() => setTomorrowPick(null))
+    } else {
+      setTomorrowPick(null)
+    }
+  }, [refreshKey, confidence, day, dayOffset, scope])
 
   const changeScope = (next: Scope) => {
     setScope(next)
@@ -137,196 +179,131 @@ function App() {
     picksState.status === 'ready' ? picksState.picks.map((p) => `${p.match_id}-${p.market}-${p.selection}`) : [],
   )
   const otherCandidates = candidates.filter((c) => !topPickKeys.has(`${c.match_id}-${c.market}-${c.selection}`))
+  const perf = performances[scope]
+
+  const nbaStart = nbaStatus?.regular_season_start_utc
+  const meta: Record<Scope, SectionMeta | null> = {
+    europa: performances.europa ? { text: String(performances.europa.settled_picks), mono: true } : null,
+    colombia: performances.colombia ? { text: String(performances.colombia.settled_picks + performances.colombia.pending_picks), mono: true } : null,
+    nba:
+      nbaStart && !nbaStatus?.regular_season_started
+        ? { text: new Date(nbaStart).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) }
+        : performances.nba
+          ? { text: String(performances.nba.settled_picks), mono: true }
+          : null,
+  }
+
+  const emptyActions =
+    dayOffset === 0
+      ? [
+          { label: 'Ver los picks de mañana', onClick: () => setDayOffset(1), primary: true },
+          { label: 'Cómo terminaron los de ayer', onClick: () => setDayOffset(-1) },
+        ]
+      : [{ label: 'Volver a hoy', onClick: () => setDayOffset(0), primary: true }]
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-      <header className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-4">
-          <div>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">⚽ Apuesta Segura</h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Motor de predicciones de fútbol y NBA · cuota 1.50–2.00 · +EV
-            </p>
-          </div>
-          <button
-            onClick={reload}
-            title="Vuelve a leer lo que ya está en la base de datos (no gasta consultas)"
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            Recargar
-          </button>
-        </div>
-      </header>
+    <div className="min-h-screen bg-ink-950 bg-dots text-fg lg:flex">
+      <Sidebar scope={scope} onScope={changeScope} meta={meta} status={actions.status} onReload={reload} />
 
-      <main className="mx-auto max-w-4xl px-4 py-8">
-        <div className="mb-6">
-          <DataPanel scope={scope} onFinished={reload} />
-        </div>
-        <div className="mb-6">
-          <SectionSelector value={scope} onChange={changeScope} />
-        </div>
-        {scope === 'colombia' && <ColombiaBanner status={colombiaStatus} />}
-        {scope === 'nba' && <NbaBanner status={nbaStatus} />}
-        {performance && (
-          <div className="mb-6">
-            <PerformanceBar performance={performance} />
-          </div>
-        )}
-        {modelVsMarket && (
-          <div className="-mt-3 mb-6">
-            <ModelVsMarket data={modelVsMarket} />
-          </div>
-        )}
+      <div className="min-w-0 flex-1">
+        <MobileTopBar scope={scope} onScope={changeScope} status={actions.status} onReload={reload} />
 
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              {scope === 'colombia' ? 'Picks Colombia' : scope === 'nba' ? 'Picks NBA' : 'Picks'} de {when}
-            </h2>
-            <DaySelector value={dayOffset} onChange={setDayOffset} />
-          </div>
-          <ConfidenceFilter value={minConfidence} onChange={setMinConfidence} />
-        </div>
-        {dayOffset === 1 && scope === 'nba' && (
-          <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
-            Adelanto con las líneas de ahora: se rehacen cada vez que se actualiza la NBA y pueden cambiar (las lesiones de
-            última hora mueven mucho las líneas en la NBA).
-          </p>
-        )}
-        {dayOffset === 1 && scope !== 'nba' && (
-          <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
-            Adelanto con las cuotas de ahora: se rehacen con cuotas frescas cuando abras la página mañana (o con «Refrescar
-            cuotas» antes del partido) y pueden cambiar.
-          </p>
-        )}
-        {dayOffset === -1 && (
-          <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
-            Lo que el sistema recomendó ayer y cómo terminó. Pulsa «Verificar resultados» para traer los resultados y
-            liquidarlos (la API publica las estadísticas ~2-3 h después del inicio).
-          </p>
-        )}
-
-        {picksState.status === 'loading' && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-            Cargando picks de {when}...
-          </div>
-        )}
-
-        {picksState.status === 'error' && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-            <p className="font-semibold">No se pudo conectar con la API</p>
-            <p className="mt-1 text-sm">{picksState.message}</p>
-            <p className="mt-2 text-sm">
-              Verifica que el backend esté corriendo en <code>http://127.0.0.1:8000</code>.
-            </p>
-          </div>
-        )}
-
-        {picksState.status === 'empty' && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center dark:border-slate-700 dark:bg-slate-900">
-            <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-              {minConfidence
-                ? `No hay picks con confianza ${minConfidence.toLowerCase()} o mayor ${when}`
-                : scope === 'colombia'
-                  ? `No hay picks colombianos ${when}`
-                  : scope === 'nba'
-                    ? `No hay picks de la NBA ${when}`
-                    : `No hay apuesta segura ${when}`}
-            </p>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-              {minConfidence
-                ? 'Prueba bajando el filtro de confianza, o vuelve más tarde cuando haya más mercados con backtest validado.'
-                : scope === 'nba'
-                  ? 'Un pick de la NBA necesita una cuota de Betano o Bwin que pague más de lo justo (con "Cuotas Betano / Pinnacle"). Si no hay, es que el mercado está bien puesto: en la NBA pasa casi siempre.'
-                  : dayOffset === 1
-                  ? 'Las cuotas de mañana aún no están sincronizadas o ningún mercado validado tiene ventaja. Se traen con «Actualizar el día» (se hace sola al abrir la página tras renovarse la cuota).'
-                  : `Ningún partido de ${when} tiene equipos con historial suficiente y una cuota con ventaja plausible. Es normal en días de pocos partidos: el sistema prefiere no recomendar antes que recomendar a ciegas.`}
-            </p>
-          </div>
-        )}
-
-        {picksState.status === 'ready' && (
-          <div className="space-y-4">
-            {picksState.picks.map((pick, i) => (
-              <PickOfTheDayCard
-                key={`${pick.match_id}-${pick.market}-${pick.selection}`}
-                pick={pick}
-                rank={i + 1}
-                onOpen={() => openPick(pick)}
-              />
-            ))}
-          </div>
-        )}
-
-        <div className="mt-8">
-          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            {scope === 'nba' ? `Partidos de la NBA de ${when}` : `Partidos de ${when} con análisis`}
-          </h3>
-          <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">
-            {scope === 'nba' ? 'Todos los partidos del día; los que ya tienen líneas muestran sus mercados evaluados.' : 'Partidos con historial suficiente y cuotas.'} Abre cualquiera para ver <em>todos</em> sus mercados evaluados,
-            ordenados de más a menos favorable — aunque no haya pasado el filtro estricto de picks.
-          </p>
-          {matches.length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-              {dayOffset === 0 ? 'Hoy' : dayOffset === 1 ? 'Mañana' : 'Ayer'}{' '}
-              {scope === 'nba' ? 'no hay partidos de la NBA.' : 'no hay partidos con datos suficientes para analizar.'}
+        <main className="mx-auto flex max-w-[1240px] flex-col gap-7 px-4 py-6 sm:px-8 lg:px-11 lg:py-9">
+          <header className="flex flex-wrap items-end justify-between gap-5">
+            <div className="flex flex-col gap-1.5">
+              <span className={`text-xs font-semibold tracking-[0.14em] uppercase ${scope === 'nba' ? 'text-sky' : 'text-lime'}`}>{EYEBROW[scope]}</span>
+              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                <h1 className="m-0 font-display text-5xl leading-none font-extrabold tracking-tight sm:text-[56px]">{dayTitle(dayOffset)}</h1>
+                <span className="text-[17px] text-muted">{dayDate(dayOffset)}</span>
+              </div>
             </div>
-          ) : (
-            <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-700 dark:bg-slate-900">
-              {matches.map((m) => (
-                <li key={m.match_id}>
-                  <button
-                    onClick={() => openMatch(m)}
-                    className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/60"
-                  >
-                    <div>
-                      <p className="font-medium text-slate-900 dark:text-slate-100">
-                        {m.home_team} vs {m.away_team}
-                      </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {m.league} ·{' '}
-                        {new Date(m.kickoff_utc).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })} · {m.n_markets}{' '}
-                        mercados
-                        {m.final_score && <span className="ml-2 font-semibold text-slate-700 dark:text-slate-200">Final {m.final_score}</span>}
-                      </p>
-                    </div>
-                    <span className="shrink-0 text-xs text-slate-400 dark:text-slate-500">
-                      {m.has_pick && <span className="mr-2 font-semibold text-indigo-600 dark:text-indigo-400">PICK</span>}
-                      Ver mercados →
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+            <DayTabs value={dayOffset} onChange={setDayOffset} />
+          </header>
 
-        {otherCandidates.length > 0 && (
-          <div className="mt-8">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Otros candidatos evaluados {when}
-            </h3>
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="text-xs uppercase text-slate-400 dark:text-slate-500">
-                    <th className="pb-2 font-medium">Partido</th>
-                    <th className="pb-2 font-medium">Mercado</th>
-                    <th className="pb-2 font-medium">Cuota</th>
-                    <th className="pb-2 font-medium">EV</th>
-                    <th className="pb-2 font-medium">Confianza</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {otherCandidates.map((c) => (
-                    <CandidateRow key={`${c.match_id}-${c.market}-${c.selection}`} candidate={c} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <ActionBar scope={scope} actions={actions} />
+
+          {scope === 'nba' && <NbaSeasonCard status={nbaStatus} />}
+
+          {perf && perf.settled_picks > 0 && <KpiStrip performance={perf} />}
+
+          <div className="grid items-start gap-7 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
+            <section aria-label={`${PICKS_HEADING[scope]} de ${when}`} className="flex min-w-0 flex-col gap-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="m-0 text-xs font-semibold tracking-[0.12em] text-faint uppercase">
+                  {PICKS_HEADING[scope]} de {when}
+                </h2>
+                {scope === 'europa' && <ConfidenceFilter value={minConfidence} onChange={setMinConfidence} />}
+              </div>
+
+              {dayOffset === 1 && (
+                <p className="m-0 text-[13px] text-faint">
+                  {scope === 'nba'
+                    ? 'Adelanto con las líneas de ahora: se rehacen cada vez que se actualiza la NBA (las lesiones de última hora mueven mucho las líneas).'
+                    : 'Adelanto con las cuotas de ahora: se rehacen cuando abras la página mañana, o con «Refrescar cuotas» antes del partido.'}
+                </p>
+              )}
+              {dayOffset === -1 && (
+                <p className="m-0 text-[13px] text-faint">
+                  Lo que el sistema recomendó ayer y cómo terminó. «Verificar resultados» trae los resultados y los liquida (la API publica las
+                  estadísticas ~2-3 h después del inicio).
+                </p>
+              )}
+
+              {picksState.status === 'loading' && (
+                <div className="flex min-h-72 items-center justify-center rounded-3xl border border-ink-600 bg-ink-850 text-sm text-muted">
+                  Cargando picks de {when}...
+                </div>
+              )}
+
+              {picksState.status === 'error' && (
+                <div className="flex flex-col gap-2 rounded-3xl border border-loss-line bg-loss/5 p-6 text-sm">
+                  <span className="flex items-center gap-2 font-semibold text-loss">
+                    <Icon name="alert" />
+                    No se pudo conectar con la API
+                  </span>
+                  <span className="text-fg-2">{picksState.message}</span>
+                  <span className="text-muted">
+                    Verifica que el backend esté corriendo en <code className="font-mono">http://127.0.0.1:8000</code>.
+                  </span>
+                </div>
+              )}
+
+              {picksState.status === 'empty' && (
+                <EmptyPicks
+                  title={emptyTitle(scope, dayOffset, confidence ? minConfidence : null)}
+                  body={emptyBody(scope, dayOffset, confidence ? minConfidence : null)}
+                  actions={emptyActions}
+                />
+              )}
+
+              {picksState.status === 'ready' &&
+                picksState.picks.map((pick, i) => (
+                  <PickTicket
+                    key={`${pick.match_id}-${pick.market}-${pick.selection}`}
+                    pick={pick}
+                    scope={scope}
+                    rank={i + 1}
+                    variant={i === 0 ? 'hero' : 'compact'}
+                    onOpen={() => openPick(pick)}
+                  />
+                ))}
+            </section>
+
+            <aside className="grid items-start gap-5 md:grid-cols-2 xl:grid-cols-1">
+              {(!perf || perf.settled_picks === 0) && <CounterCard scope={scope} performance={perf} />}
+              {tomorrowPick && <TomorrowCard pick={tomorrowPick} onSeeDay={() => setDayOffset(1)} />}
+              {scope === 'colombia' && <ColombiaCard status={colombiaStatus} />}
+              {scope === 'nba' && <NbaDataCard status={nbaStatus} />}
+              {modelVsMarket && <ModelVsMarket data={modelVsMarket} />}
+            </aside>
           </div>
-        )}
-      </main>
+
+          {scope === 'nba' && <NbaValidationCard v={nbaStatus?.validation ?? null} />}
+
+          <MatchList matches={matches} scope={scope} when={when} onOpen={openMatch} />
+          <CandidatesTable candidates={otherCandidates} when={when} />
+        </main>
+      </div>
 
       {selected && <MatchDetail match={selected.match} pick={selected.pick} scope={scope} onClose={() => setSelected(null)} />}
     </div>

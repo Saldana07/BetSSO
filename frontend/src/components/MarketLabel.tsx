@@ -41,7 +41,21 @@ export function formatMarket(market: string): string {
   return market
 }
 
-export function formatSelection(market: string, selection: string): string {
+export interface Teams {
+  home: string
+  away: string
+}
+
+/** La selección en palabras. Con `teams`, "Local"/"Visitante" pasan a ser el
+ *  nombre del equipo: "Empate o Millonarios" en vez de "Empate o visitante". */
+export function formatSelection(market: string, selection: string, teams?: Teams): string {
+  const side = (sel: string) =>
+    teams && sel === 'HOME' ? teams.home : teams && sel === 'AWAY' ? teams.away : (SELECTION_LABELS[sel] ?? sel)
+  if (teams && market === 'DOUBLE_CHANCE') {
+    if (selection === '1X') return `${teams.home} o empate`
+    if (selection === 'X2') return `Empate o ${teams.away}`
+    if (selection === '12') return `${teams.home} o ${teams.away}`
+  }
   const stat = countStat(market)
   if (stat) return `${SELECTION_LABELS[selection] ?? selection} ${line(market, stat.prefix)} ${stat.name}`
   if (market.startsWith('TEAM_OU_')) {
@@ -53,21 +67,10 @@ export function formatSelection(market: string, selection: string): string {
     const l = line(market, 'AH_')
     // La línea es del local; para el visitante se muestra con el signo invertido.
     const shown = selection === 'HOME' ? l : l.startsWith('-') ? `+${l.slice(1)}` : `-${l.slice(1)}`
-    return `${SELECTION_LABELS[selection] ?? selection} ${shown}`
+    return `${side(selection)} ${shown}`
   }
   if (market === 'EXACT_SCORE') return selection.replace('-', ' – ')
-  if (market.startsWith('SPREAD_')) return `${SELECTION_LABELS[selection] ?? selection} ${sideLine(line(market, 'SPREAD_'), selection)}`
+  if (market.startsWith('SPREAD_')) return `${side(selection)} ${sideLine(line(market, 'SPREAD_'), selection)}`
   if (market.startsWith('TOTAL_')) return `${SELECTION_LABELS[selection] ?? selection} ${line(market, 'TOTAL_')} puntos`
-  return SELECTION_LABELS[selection] ?? selection
-}
-
-export function MarketLabel({ market, selection }: { market: string; selection: string }) {
-  return (
-    <div>
-      <p className="text-sm text-slate-500 dark:text-slate-400">{formatMarket(market)}</p>
-      <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-        {formatSelection(market, selection)}
-      </p>
-    </div>
-  )
+  return side(selection)
 }

@@ -1,21 +1,26 @@
 import { useEffect, useState } from 'react'
 import { getNbaInjuries, type NbaInjuries as Injuries, type NbaInjury } from '../api'
+import { Icon } from './Icon'
 
 function TeamList({ team, rows }: { team: string; rows: NbaInjury[] }) {
   return (
-    <div>
-      <p className="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-100">{team}</p>
+    <div className="flex flex-col gap-3 rounded-2xl border border-ink-600 bg-ink-850 p-5">
+      <span className="font-display text-lg font-bold">{team}</span>
       {rows.length === 0 ? (
-        <p className="text-sm text-slate-500 dark:text-slate-400">Sin bajas reportadas.</p>
+        <span className="text-sm text-muted">Sin bajas reportadas.</span>
       ) : (
-        <ul className="space-y-2">
+        <ul className="m-0 flex list-none flex-col gap-3 p-0">
           {rows.map((r) => (
-            <li key={r.player} className="text-sm">
-              <span className="font-medium text-slate-800 dark:text-slate-200">{r.player}</span>{' '}
-              <span className={r.out ? 'font-semibold text-red-600 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}>
-                · {r.status}
+            <li key={r.player} className="flex flex-col gap-1 text-sm">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{r.player}</span>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${r.out ? 'border-loss-line text-loss' : 'border-warn-line text-warn'}`}
+                >
+                  {r.status}
+                </span>
               </span>
-              {r.comment && <p className="text-xs text-slate-500 dark:text-slate-400">{r.comment}</p>}
+              {r.comment && <span className="text-xs leading-relaxed text-muted">{r.comment}</span>}
             </li>
           ))}
         </ul>
@@ -36,18 +41,21 @@ export function NbaInjuries({ matchId }: { matchId: number }) {
       .catch(() => setState({ status: 'error' }))
   }, [matchId])
 
-  if (state.status === 'loading') return <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">Leyendo el parte de lesiones...</p>
-  if (state.status === 'error') return <p className="py-10 text-center text-sm text-red-600 dark:text-red-400">No se pudo leer el parte de lesiones de ESPN.</p>
+  if (state.status === 'loading') return <p className="py-10 text-center text-sm text-muted">Leyendo el parte de lesiones...</p>
+  if (state.status === 'error') return <p className="py-10 text-center text-sm text-loss">No se pudo leer el parte de lesiones de ESPN.</p>
 
   const { data } = state
   return (
-    <div className="space-y-4">
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        En la NBA una baja de última hora mueve mucho la línea: si un titular sale como "Fuera" después de tomar la cuota,
-        ese precio ya no vale lo mismo. Fuente: ESPN (comentarios en inglés)
-        {data.updated_at && `, leído a las ${new Date(data.updated_at).toLocaleTimeString('es', { hour: 'numeric', minute: '2-digit' })}`}.
+    <div className="flex flex-col gap-4">
+      <p className="m-0 flex items-start gap-3 rounded-2xl border border-sky-line bg-sky-bg px-4 py-3 text-[13px] leading-relaxed text-sky-fg">
+        <Icon name="bandage" size={18} className="mt-0.5" />
+        <span>
+          En la NBA una baja de última hora mueve mucho la línea: si un titular sale como "Fuera" después de tomar la cuota, ese precio
+          ya no vale lo mismo. Fuente: ESPN (comentarios en inglés)
+          {data.updated_at && `, leído a las ${new Date(data.updated_at).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' })}`}.
+        </span>
       </p>
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <TeamList team={data.home_team} rows={data.home} />
         <TeamList team={data.away_team} rows={data.away} />
       </div>

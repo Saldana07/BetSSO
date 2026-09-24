@@ -1,1 +1,60 @@
 @import "tailwindcss";
+
+/* "Boleto nocturno": tablero oscuro, cada pick es un boleto; cifras en mono.
+   Sin conexión, las tipografías caen a las del sistema con métricas parecidas. */
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-ink-950: #0b0e13; /* fondo */
+  --color-ink-900: #0f131a; /* barra lateral, modal */
+  --color-ink-850: #141a23; /* tarjetas */
+  --color-ink-800: #19202b; /* celdas dentro de tarjetas */
+  --color-ink-750: #1a212c; /* ítem activo */
+  --color-ink-700: #1f2733; /* separadores suaves */
+  --color-ink-600: #232c3a; /* bordes */
+  --color-ink-500: #2a3444; /* bordes marcados, perforación */
+  --color-ink-400: #3a4556;
+
+  --color-fg: #eef1f5;
+  --color-fg-2: #c9d0da;
+  --color-muted: #a3adbb;
+  --color-faint: #8c96a6;
+
+  --color-lime: #c8f169; /* acento: ventaja, acciones principales */
+  --color-sky: #7cc7ff; /* NBA e información */
+  --color-sky-bg: #102133;
+  --color-sky-line: #1e3a55;
+  --color-sky-fg: #d5ecff;
+  --color-win: #6ee7a8;
+  --color-loss: #ff9a85;
+  --color-loss-line: #5a2e27;
+  --color-warn: #f2c14e;
+  --color-warn-fg: #f2d48a;
+  --color-warn-bg: #1e1a10;
+  --color-warn-line: #3d3419;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink-950);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Rejilla de puntos del fondo. */
+.bg-dots {
+  background-image: radial-gradient(#1a212c 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-lime);
+  outline-offset: 2px;
+}

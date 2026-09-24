@@ -1369,6 +1369,21 @@ horas; "Cuotas Betano / Pinnacle" gasta la cuota de baloncesto (1 por día +
 primera vez importa el historial (~15.000 partidos y ~6.000 cierres de ESPN,
 reanudable) y entrena el modelo. La pretemporada no genera picks.
 
+## Interfaz "Boleto nocturno"
+
+Tablero oscuro (un solo tema) con barra lateral: los tres apartados con su
+contador, las consultas de fútbol y de baloncesto del día y "Recargar" (solo
+relee la base de datos). Cada pick es un boleto: el partido arriba, una
+perforación, y abajo la apuesta con la cuota grande en monoespaciada, la
+ventaja (EV) en lima y las probabilidades del modelo y de la cuota lado a
+lado. Tipografías: Bricolage Grotesque (títulos), IBM Plex Sans (texto),
+IBM Plex Mono (cifras); los colores son tokens en `frontend/src/index.css`.
+Las acciones que gastan consultas viven en `useActions.ts` (lo comparten la
+barra lateral y la de acciones). En pantallas de menos de 1024 px la barra
+lateral pasa a una barra superior con los apartados. Horas y fechas en
+formato de Colombia ("7:30 p. m."), y las selecciones nombran al equipo
+("Empate o Millonarios").
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de
