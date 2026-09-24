@@ -201,3 +201,39 @@ export interface ColombiaStatus {
   teams_total: number
   import_requests_left: number
 }
+
+/** Botones que gastan cuota de API-Football (nada corre solo). */
+export type ActionName = 'actualizar' | 'cuotas' | 'verificar' | 'completar'
+
+export interface ActionRun {
+  action: ActionName
+  title: string
+  started_at: string
+  step: string
+  step_index: number
+  steps: number
+}
+
+export interface ActionResult {
+  finished_at: string
+  ok: boolean
+  /** Consultas gastadas (null si la acción cruzó la renovación de la cuota). */
+  spent: number | null
+  steps: { label: string; ok: boolean; summary: string }[]
+}
+
+export interface ActionStatus {
+  quota: { used: number; limit: number; breakdown: Record<string, number>; resets_at: string }
+  running: ActionRun | null
+  last: Partial<Record<ActionName, ActionResult>>
+  /** Primera visita desde que se renovó la cuota: toca actualizar el día. */
+  update_due: boolean
+  titles: Record<ActionName, string>
+}
+
+export interface ActionEstimates {
+  actualizar: { requests: number; approximate: boolean }
+  cuotas: { requests: number }
+  verificar: { requests: number; matches: number }
+  completar: { requests: number; measurement_matches: number }
+}

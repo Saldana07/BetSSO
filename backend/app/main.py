@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.actions import router as actions_router
 from app.api.predictions import router as predictions_router
 
 app = FastAPI(title="Football Value Betting API", version="1.0.0")
@@ -14,6 +15,7 @@ app.add_middleware(
 )
 
 app.include_router(predictions_router)
+app.include_router(actions_router)
 
 
 @app.get("/health")

@@ -32,7 +32,7 @@ function ResultBanner({ pick }: { pick: PickOfTheDay }) {
   if (pick.final_score) {
     return (
       <div className="mt-4 rounded-xl bg-slate-100 px-4 py-2 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-        Final {pick.final_score} · pendiente de liquidar (esperando las estadísticas del partido)
+        Final {pick.final_score} · pendiente de liquidar (pulsa «Verificar resultados»)
       </div>
     )
   }

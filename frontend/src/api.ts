@@ -1,4 +1,7 @@
 import type {
+  ActionEstimates,
+  ActionName,
+  ActionStatus,
   ConfidenceLevel,
   DailyCandidate,
   MatchMarkets,
@@ -81,4 +84,21 @@ export function getMatchMarkets(matchId: number): Promise<MatchMarkets> {
 
 export function getModelVsMarket(scope: Scope = 'europa'): Promise<ModelVsMarket> {
   return getJson<ModelVsMarket>(withParams('/api/predictions/model-vs-market', { scope }))
+}
+
+export function getActionStatus(): Promise<ActionStatus> {
+  return getJson<ActionStatus>('/api/actions/status')
+}
+
+export function getActionEstimates(): Promise<ActionEstimates> {
+  return getJson<ActionEstimates>('/api/actions/estimates')
+}
+
+/** Lanza una acción que gasta cuota de API; responde al instante y la acción
+ *  sigue en segundo plano (su progreso, en getActionStatus). */
+export async function launchAction(action: ActionName, auto = false): Promise<{ started: boolean; reason?: string }> {
+  const res = await fetch(withParams(`/api/actions/${action}`, { auto: auto ? 'true' : undefined }), { method: 'POST' })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new ApiError(body.detail ?? `Error ${res.status}`, res.status)
+  return body
 }

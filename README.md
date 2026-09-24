@@ -1258,6 +1258,49 @@ Europa.
   `lru_cache` de settings (patrón estándar de FastAPI), tabla de lesiones sin
   datos (el plan gratuito no las da; ya documentado).
 
+## Consultas solo bajo demanda: botones en vez de tareas programadas
+
+**El problema.** Las 100 consultas diarias se iban solas: tres tareas
+programadas (flujo diario a las 08:00 y al iniciar sesión, liquidación cada 2
+horas, Colombia a las 19:10) más `start.bat`, que lanzaba el flujo completo al
+arrancar. Cada pasada importaba además historial (Colombia, árbitros) con lo
+que sobrara: el 23/09, 82 de las 100 se fueron en historial colombiano.
+
+**Ahora nada corre solo.** Las tareas se quitaron del Programador y los
+archivos que las registraban (`register_task.ps1`, `run_hidden.vbs`,
+`colombia_ahora.bat`) se borraron. Lo que gasta cuota son cuatro acciones
+(`backend/jobs/on_demand.py`) que la página lanza con botones:
+
+| Botón | Qué hace | Coste |
+|---|---|---|
+| Verificar resultados | resultado + estadísticas de los partidos con picks, liquidación y cuota de cierre | ~2 por partido con pick |
+| Refrescar cuotas | cuotas de más de 3 h de los partidos de las próximas 12 h, y rehace sus picks | 1 por partido |
+| Actualizar el día | partidos y cuotas de hoy y mañana y sus picks | ~2 + 1 por partido con historial |
+| Completar datos | medición "Modelo vs casa", historial colombiano, árbitros, huecos del histórico | lo que sobre, dejando reserva |
+
+"Actualizar el día" es lo único automático, y solo **al abrir la página**: la
+primera visita tras renovarse la cuota (00:00 UTC = 19:00 en Colombia) la
+lanza una vez; si falla no se reintenta en cada visita (`auto_attempted` en
+`data/actions_state.json`). Cada botón muestra antes cuánto gastaría
+(`GET /api/actions/estimates`) y pide confirmación si pasa de 15.
+
+**Cómo corre.** `POST /api/actions/{acción}` lanza `python -m
+jobs.on_demand <acción>` en su propio proceso sin ventana y responde al
+instante; la página consulta `GET /api/actions/status` mientras corre
+(cuota usada según el registro local, paso actual, resultado de la última).
+El candado sigue siendo `.daily_lock`; si el proceso muere (PC suspendido),
+el estado se limpia solo al comprobar que su PID ya no existe. La salida de
+cada paso queda en `backend/actions.log`. `daily.bat` y `settle.bat` quedan
+como atajos manuales de "Actualizar el día" y "Verificar resultados"
+(arrancan Docker si hace falta).
+
+**Ajustes que evitan gastar de más:** `sync_odds --fresh-hours 3` no vuelve a
+pedir cuotas recientes (actualizar dos veces no cuesta el doble) ni pide las
+de partidos ya empezados, y guarda lo traído si la cuota se agota a mitad; la
+cuota de cierre solo se pide para partidos de los últimos 4 días (antes un
+partido sin cuotas en la API se volvía a pedir en cada liquidación);
+`fetch_match_data --tiers` separa "tus picks" (sin reserva) del resto.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

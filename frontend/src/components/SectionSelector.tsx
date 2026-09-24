@@ -46,7 +46,7 @@ export function ColombiaBanner({ status }: { status: ColombiaStatus | null }) {
           Historial: {status.matches} partidos, {status.matches_with_stats} con estadísticas · equipos listos para córners y
           tarjetas (10+ partidos): {status.teams_ready} de {status.teams_total}
           {status.import_requests_left > 0 &&
-            ` · faltan ~${status.import_requests_left} consultas gratuitas para completar 2022-2026 (se hacen solas cada día)`}
+            ` · faltan ~${status.import_requests_left} consultas para completar 2022-2026 (con «Completar datos»)`}
         </p>
       )}
     </div>

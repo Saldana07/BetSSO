@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   ApiError,
   getColombiaStatus,
@@ -12,6 +12,7 @@ import {
 } from './api'
 import { CandidateRow } from './components/CandidateRow'
 import { ConfidenceFilter } from './components/ConfidenceFilter'
+import { DataPanel } from './components/DataPanel'
 import { DaySelector, dayLabel, type DayOffset } from './components/DaySelector'
 import { MatchDetail, type MatchRef } from './components/MatchDetail'
 import { ModelVsMarket } from './components/ModelVsMarket'
@@ -49,6 +50,10 @@ function App() {
   const [modelVsMarket, setModelVsMarket] = useState<ModelVsMarketData | null>(null)
   const [selected, setSelected] = useState<Selected | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+
+  // Estable: DataPanel la usa en sus efectos (una función nueva en cada render
+  // los relanzaría).
+  const reload = useCallback(() => setRefreshKey((k) => k + 1), [])
 
   const day = localDay(dayOffset)
   const when = dayLabel(dayOffset)
@@ -97,13 +102,12 @@ function App() {
     window.history.replaceState(null, '', url)
   }
 
-  // Refresco automático: la liquidación corre cada 2 h en segundo plano y los
-  // picks de mañana se regeneran por la mañana; sin esto había que pulsar
-  // "Actualizar" para enterarse.
+  // Relectura periódica de la base de datos (no gasta consultas a la API): por
+  // si una acción se lanzó desde otra pestaña o desde daily.bat.
   useEffect(() => {
-    const id = window.setInterval(() => setRefreshKey((k) => k + 1), 5 * 60 * 1000)
+    const id = window.setInterval(reload, 5 * 60 * 1000)
     return () => window.clearInterval(id)
-  }, [])
+  }, [reload])
 
   // Enlace directo a un partido: ?match=ID abre su análisis (compartible).
   useEffect(() => {
@@ -133,15 +137,19 @@ function App() {
             </p>
           </div>
           <button
-            onClick={() => setRefreshKey((k) => k + 1)}
+            onClick={reload}
+            title="Vuelve a leer lo que ya está en la base de datos (no gasta consultas)"
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
           >
-            Actualizar
+            Recargar
           </button>
         </div>
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-8">
+        <div className="mb-6">
+          <DataPanel onFinished={reload} />
+        </div>
         <div className="mb-6">
           <SectionSelector value={scope} onChange={changeScope} />
         </div>
@@ -168,12 +176,14 @@ function App() {
         </div>
         {dayOffset === 1 && (
           <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
-            Adelanto con las cuotas de hoy: mañana por la mañana se regeneran con las cuotas frescas y pueden cambiar.
+            Adelanto con las cuotas de ahora: se rehacen con cuotas frescas cuando abras la página mañana (o con «Refrescar
+            cuotas» antes del partido) y pueden cambiar.
           </p>
         )}
         {dayOffset === -1 && (
           <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
-            Lo que el sistema recomendó ayer y cómo terminó. Los picks se liquidan cuando la API publica las estadísticas del partido.
+            Lo que el sistema recomendó ayer y cómo terminó. Pulsa «Verificar resultados» para traer los resultados y
+            liquidarlos (la API publica las estadísticas ~2-3 h después del inicio).
           </p>
         )}
 
@@ -206,7 +216,7 @@ function App() {
               {minConfidence
                 ? 'Prueba bajando el filtro de confianza, o vuelve más tarde cuando haya más mercados con backtest validado.'
                 : dayOffset === 1
-                  ? 'Las cuotas de mañana aún no están sincronizadas o ningún mercado validado tiene ventaja. El flujo diario las trae cada mañana.'
+                  ? 'Las cuotas de mañana aún no están sincronizadas o ningún mercado validado tiene ventaja. Se traen con «Actualizar el día» (se hace sola al abrir la página tras renovarse la cuota).'
                   : `Ningún partido de ${when} tiene equipos con historial suficiente y una cuota con ventaja plausible. Es normal en días de pocos partidos: el sistema prefiere no recomendar antes que recomendar a ciegas.`}
             </p>
           </div>

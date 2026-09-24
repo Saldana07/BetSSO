@@ -12,7 +12,7 @@ por ejemplo justo antes de generar los picks del día siguiente.
 Uso:
     python -m jobs.settle_predictions
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -22,6 +22,11 @@ from app.models import MarketEvaluation, Match, Odds, Prediction
 from ml.ingestion.api_football_client import APIFootballClient, APIFootballError
 from ml.ingestion.mappers import upsert_odds_for_match
 from ml.value_betting.settlement import MissingStatsError, UnknownMarketError, bet_won, profit_loss
+
+# API-Football conserva las cuotas unos 7 días tras el partido. Pasado este
+# margen no se piden más: si no llegaron, no van a llegar, y pedirlas en cada
+# liquidación gastaría 1 petición por partido para nada.
+CLOSING_WINDOW = timedelta(days=4)
 
 
 def _capture_closing_odds(db: Session, pending: list[Prediction]) -> int:
@@ -98,7 +103,8 @@ def settle(db: Session) -> dict:
     needs_closing = db.execute(
         select(Prediction)
         .join(Match, Prediction.match_id == Match.id)
-        .where(Prediction.closing_odds.is_(None), Match.status == "FINISHED")
+        .where(Prediction.closing_odds.is_(None), Match.status == "FINISHED",
+               Match.kickoff_utc > now - CLOSING_WINDOW)
     ).scalars().all()
     stats["closing_captured"] = _capture_closing_odds(db, needs_closing)
 

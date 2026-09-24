@@ -15,6 +15,7 @@ from pathlib import Path
 
 USAGE_PATH = Path(__file__).resolve().parents[2] / "data" / "api_usage.json"
 KEEP_DAYS = 14
+DAILY_LIMIT = 100   # plan gratuito; se renueva a las 00:00 UTC (19:00 en Colombia)
 
 # Endpoint + parámetros -> para qué sirve (lo que se muestra en el informe).
 def purpose(endpoint: str, params: dict) -> str:

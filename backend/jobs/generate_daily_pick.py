@@ -229,17 +229,9 @@ def run(model_probabilities_fn, day: date | None = None, scope: str | None = Non
         db.close()
 
 
-def main():
-    import argparse
-
+def generate(days: list[date | None], scope: str | None = None) -> None:
+    """Genera los picks de varios días cargando los modelos una sola vez."""
     from ml.serving.predict import DEFAULT_MODEL_DIR, TrainedModels, predict_match_probabilities
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=None, help="Día (UTC) a generar, YYYY-MM-DD. Por defecto hoy.")
-    parser.add_argument("--scope", choices=["europa", "colombia"], default=None,
-                        help="Solo un apartado; por defecto ambos.")
-    args = parser.parse_args()
-    day = date.fromisoformat(args.date) if args.date else None
 
     models = TrainedModels(model_dir=DEFAULT_MODEL_DIR, model_version=settings.model_version)
 
@@ -251,9 +243,22 @@ def main():
         return predict_match_probabilities(prediction_db, match, models)
 
     try:
-        run(model_probabilities_fn, day, args.scope)
+        for day in days:
+            run(model_probabilities_fn, day, scope)
     finally:
         prediction_db.close()
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--date", action="append", default=None,
+                        help="Día (UTC) a generar, YYYY-MM-DD (se puede repetir). Por defecto hoy.")
+    parser.add_argument("--scope", choices=["europa", "colombia"], default=None,
+                        help="Solo un apartado; por defecto ambos.")
+    args = parser.parse_args()
+    generate([date.fromisoformat(d) for d in args.date] if args.date else [None], args.scope)
 
 
 if __name__ == "__main__":
