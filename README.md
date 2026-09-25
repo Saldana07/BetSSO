@@ -1275,10 +1275,10 @@ archivos que las registraban (`register_task.ps1`, `run_hidden.vbs`,
 |---|---|---|
 | Verificar resultados | resultado + estadísticas de los partidos con picks, liquidación y cuota de cierre | ~2 por partido con pick |
 | Refrescar cuotas | cuotas de más de 3 h de los partidos de las próximas 12 h, y rehace sus picks | 1 por partido |
-| Actualizar el día | partidos y cuotas de hoy y mañana y sus picks | ~2 + 1 por partido con historial |
+| Actualizar el día | resultados pendientes, partidos y cuotas de hoy y mañana, sus picks y la NBA | ~2 + 1 por partido con historial + ~2 por pick pendiente |
 | Completar datos | medición "Modelo vs casa", historial colombiano, árbitros, huecos del histórico | lo que sobre, dejando reserva |
 
-"Actualizar el día" es lo único automático, y solo **al abrir la página**: la
+"Actualizar el día" se lanza sola solo **al abrir la página** (ver abajo "Una consulta grande al día", que cambió esto el 25/09): la
 primera visita de cada mañana (desde las 6:00 de Colombia, `AUTO_UPDATE_HOUR`
 en `backend/.env`) la lanza una vez; si falla no se reintenta en cada visita
 (`auto_attempted` en `data/actions_state.json`), y sin consultas no se lanza.
@@ -1305,6 +1305,40 @@ de partidos ya empezados, y guarda lo traído si la cuota se agota a mitad; la
 cuota de cierre solo se pide para partidos de los últimos 4 días (antes un
 partido sin cuotas en la API se volvía a pedir en cada liquidación);
 `fetch_match_data --tiers` separa "tus picks" (sin reserva) del resto.
+
+### Una consulta grande al día y verificación antes de la renovación (25/09)
+
+**Lo que pasó.** El 24/09 la actualización de la mañana no pudo correr (la
+cuota estaba agotada), quedó "pendiente" todo el día y se lanzó al entrar a
+la página a las 19:30, recién renovada la cuota; a las 20:00 "Completar
+datos" vio el día de cuota ya "actualizado" y gastó 71; y la mañana del 25
+la actualización volvió a tocar (era otra mañana) y se quedó sin consultas a
+mitad (sin las cuotas de mañana).
+
+**Ahora** ([on_demand.py](backend/jobs/on_demand.py), [actions.py](backend/app/api/actions.py)):
+
+- **Una sola actualización automática por día de cuota** (de 19:00 a
+  19:00): la primera visita desde las 6:00 y **antes de la renovación**. Si
+  en ese día de cuota ya se actualizó (sola o a mano, también a las 19:30),
+  no se repite. Después de las 19:00 no se lanza sola: la siguiente es la de
+  la mañana, con la cuota entera, y lo que se haga de noche a mano respeta su
+  reserva de 70.
+- **Lo hace todo**: primero los resultados de los picks pendientes y su
+  liquidación (lo de anoche), luego partidos, cuotas y picks de hoy y mañana,
+  y al final la NBA (gratis, más las cuotas de Betano/Pinnacle con la cuota
+  de baloncesto si hay partidos). La NBA ya no se actualiza sola cada 3
+  horas. Entrar a la página solo relee la base de datos.
+- **Verificar a mano**: el botón "Verificar resultados" de siempre.
+- **Verificación automática antes de la renovación**: un hilo del backend
+  mira cada minuto; a las 18:30 (`AUTO_VERIFY_MINUTES_BEFORE_RESET=30`, 0 la
+  apaga), si quedan consultas y hay partidos jugados sin resultado, lanza
+  "Verificación automática": primero los partidos con picks, luego los de
+  mercados evaluados (lo que sobre se perdería a las 19:00) y liquida todo.
+  Una vez por día de cuota; si ya se verificó a mano no hay nada pendiente y
+  no gasta. Necesita el backend encendido (`start.bat`), no la página
+  abierta; si el PC está apagado, lo pendiente lo trae la actualización de
+  la mañana siguiente. Los partidos que terminan después de las 18:30
+  (noches de la Liga BetPlay, la NBA) quedan para esa mañana.
 
 ## Apartado NBA
 
@@ -1367,9 +1401,11 @@ mismo en vivo, los picks de hándicap y total solo van en líneas a menos de
 1.5 puntos de lo que espera el mercado, y el precio se compara con Pinnacle
 sin margen en esa misma línea (nunca con la propia casa).
 
-**Operación.** "Actualizar NBA" (gratis: calendario, resultados, líneas de
-ESPN, picks y liquidación) se lanza sola al abrir la pestaña si pasaron 3
-horas; "Cuotas Betano / Pinnacle" gasta la cuota de baloncesto (1 por día +
+**Operación.** La NBA va dentro de la actualización del día (ver "Una
+consulta grande al día"), con las cuotas de Betano/Pinnacle si hay partidos
+en las próximas 36 h. A mano: "Actualizar NBA" (gratis: calendario,
+resultados, líneas de ESPN, picks y liquidación) y "Cuotas Betano /
+Pinnacle", que gasta la cuota de baloncesto (1 por día +
 1 por partido de las próximas 36 h, sin repetir los de menos de 2 horas). La
 primera vez importa el historial (~15.000 partidos y ~6.000 cierres de ESPN,
 reanudable) y entrena el modelo. La pretemporada no genera picks.

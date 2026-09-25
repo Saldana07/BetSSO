@@ -179,13 +179,18 @@ def test_acciones_nba(tmp_path, monkeypatch):
     assert on_demand.steps_for("nba_cuotas", date(2026, 10, 25))[-1].args == ("--apisports",)
 
 
-def test_actualizacion_nba_automatica_cada_3_horas(tmp_path, monkeypatch):
-    monkeypatch.setattr(on_demand, "STATE_PATH", tmp_path / "state.json")
-    now = datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc)
-    assert on_demand.nba_update_due(now)
-    on_demand.update_state(last={"nba_cuotas": {"finished_at": (now - timedelta(hours=1)).isoformat()}})
-    assert not on_demand.nba_update_due(now)
-    assert on_demand.nba_update_due(now + timedelta(hours=3))
+def test_la_nba_va_en_la_actualizacion_del_dia(tmp_path, monkeypatch):
+    """Ya no se actualiza sola cada 3 horas al abrir la pestaña: va dentro de
+    la actualización del día, con las cuotas de Betano/Pinnacle."""
+    from ml.nba import props, train
+    (tmp_path / "params.json").write_text("{}")
+    (tmp_path / "props.json").write_text("{}")
+    monkeypatch.setattr(train, "PARAMS_PATH", tmp_path / "params.json")
+    monkeypatch.setattr(props, "PROPS_PATH", tmp_path / "props.json")
+    steps = on_demand.steps_for("actualizar", date(2026, 10, 25))
+    assert [s.module for s in steps[-2:]] == ["ml.nba.import_history", "jobs.nba_update"]
+    assert steps[-1].args == ("--apisports",) and not steps[-1].fatal
+    assert not hasattr(on_demand, "nba_update_due")
 
 
 def test_partido_de_hoy_sin_jugar_cuenta_para_el_cansancio_de_manana():

@@ -1,5 +1,5 @@
 import { isNba as isNbaScope, resetTime } from '../format'
-import type { ActionEstimates, ActionName, Scope } from '../types'
+import type { ActionEstimates, ActionName, ActionStatus, Scope } from '../types'
 import type { Actions } from '../useActions'
 import { Icon, type IconName } from './Icon'
 
@@ -8,12 +8,12 @@ type Button = { action: ActionName; label: string; icon: IconName; help: string;
 const FOOTBALL: Button[] = [
   { action: 'verificar', label: 'Verificar resultados', icon: 'shield', help: 'Trae el resultado y las estadísticas de los partidos con picks y los liquida.' },
   { action: 'cuotas', label: 'Refrescar cuotas', icon: 'trend', help: 'Cuotas nuevas de los partidos de las próximas 12 h (las de más de 3 h) y rehace sus picks.' },
-  { action: 'actualizar', label: 'Actualizar el día', icon: 'download', help: 'Partidos y cuotas de hoy y mañana y sus picks. Se hace sola la primera vez que abres la página cada mañana.' },
+  { action: 'actualizar', label: 'Actualizar el día', icon: 'download', help: 'Todo de una vez: resultados de los picks pendientes, partidos y cuotas de hoy y mañana, sus picks y la NBA. Se hace sola una vez al día: la primera vez que abres la página desde las 6:00 a. m.' },
   { action: 'completar', label: 'Completar datos', icon: 'layers', help: 'Con lo que sobre de la cuota (deja reserva): resultados para "Modelo contra la casa" e historial colombiano.' },
 ]
 
 const NBA: Button[] = [
-  { action: 'nba', label: 'Actualizar NBA', icon: 'refresh', help: 'Calendario, resultados, líneas de ESPN, picks y liquidación. Gratis (nba.com y ESPN): se hace sola al abrir esta pestaña si pasaron 3 horas.' },
+  { action: 'nba', label: 'Actualizar NBA', icon: 'refresh', help: 'Calendario, resultados, líneas de ESPN, picks y liquidación. Gratis (nba.com y ESPN). Ya va dentro de la actualización del día; esto es para repetirla a mano.' },
   { action: 'nba_cuotas', label: 'Cuotas Betano / Pinnacle', icon: 'trend', primary: true, help: 'Lo mismo, más las cuotas de Betano, Pinnacle, Bet365... de los partidos de las próximas 36 h. Usa la cuota de la API de baloncesto (100 diarias, aparte de fútbol).' },
 ]
 
@@ -33,6 +33,24 @@ function timeAgo(iso: string): string {
   if (min < 60) return `hace ${min} min`
   const h = Math.round(min / 60)
   return h < 24 ? `hace ${h} h` : new Date(iso).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+function localTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' })
+}
+
+/** Qué se hace solo y cuándo: nada más que esto gasta consultas sin un clic. */
+function AutoNote({ status }: { status: ActionStatus }) {
+  const hour = new Date(2000, 0, 1, status.auto_update_hour).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' })
+  const daily = status.update_due
+    ? `La actualización del día se hace sola al abrir la página (una vez al día, desde las ${hour}).`
+    : 'La actualización del día ya se hizo: hasta la renovación de la cuota solo se relee lo guardado.'
+  const verify = !status.auto_verify_at
+    ? ''
+    : status.auto_verify_done
+      ? ' La verificación automática de hoy ya se miró.'
+      : ` A las ${localTime(status.auto_verify_at)}, si quedan consultas y hay partidos jugados sin resultado, se verifican solos (con el backend encendido).`
+  return <p className="m-0 text-xs text-faint text-pretty">{daily + verify}</p>
 }
 
 /** Los botones que gastan consultas, cada uno con lo que costaría ahora. */
@@ -92,8 +110,7 @@ export function ActionBar({ scope, actions }: { scope: Scope; actions: Actions }
       {running && (
         <p role="status" className="flex items-center gap-2.5 text-sm text-lime">
           <span className="size-2 animate-pulse rounded-full bg-lime" />
-          {autoStarted && running.action === 'actualizar' && 'Actualización de la mañana: '}
-          {autoStarted && running.action === 'nba' && 'Actualización automática (gratis): '}
+          {autoStarted && running.action === 'actualizar' && 'Automática, una vez al día: '}
           {running.title}
           {running.step_index > 0 && ` · paso ${running.step_index} de ${running.steps}: ${running.step}`}
         </p>
@@ -116,6 +133,8 @@ export function ActionBar({ scope, actions }: { scope: Scope; actions: Actions }
           </ul>
         </details>
       )}
+
+      {!running && <AutoNote status={status} />}
 
       {exhausted && !running && (
         <p className="text-xs text-warn-fg">

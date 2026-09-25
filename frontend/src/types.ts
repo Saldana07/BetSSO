@@ -292,11 +292,13 @@ export interface ColombiaStatus {
   import_requests_left: number
 }
 
-/** Botones que gastan cuota de API-Football (nada corre solo). */
+/** Botones que gastan cuota de API-Football. */
 export type ActionName = 'actualizar' | 'cuotas' | 'verificar' | 'completar' | 'nba' | 'nba_cuotas'
+/** Más la que lanza el backend solo antes de renovarse la cuota (sin botón). */
+export type AnyActionName = ActionName | 'verificar_auto'
 
 export interface ActionRun {
-  action: ActionName
+  action: AnyActionName
   title: string
   started_at: string
   step: string
@@ -317,14 +319,16 @@ export interface ActionStatus {
   /** API de baloncesto (NBA): misma clave, cuota aparte. */
   quota_basketball: { used: number; limit: number; breakdown: Record<string, number> }
   running: ActionRun | null
-  last: Partial<Record<ActionName, ActionResult>>
-  /** Primera visita de la mañana (desde `auto_update_hour`): toca actualizar el día. */
+  last: Partial<Record<AnyActionName, ActionResult>>
+  /** Toca la actualización del día (una por día de cuota, desde `auto_update_hour`). */
   update_due: boolean
   /** Hora local desde la que la página actualiza el día sola (6 = 6:00 a. m.). */
   auto_update_hour: number
-  /** La actualización NBA (gratis) toca: la última fue hace más de 3 horas. */
-  nba_update_due: boolean
-  titles: Record<ActionName, string>
+  /** Cuándo verifica solo el backend lo pendiente, antes de renovarse la cuota (null: apagado). */
+  auto_verify_at: string | null
+  /** Esa verificación ya se miró en este día de cuota. */
+  auto_verify_done: boolean
+  titles: Record<AnyActionName, string>
 }
 
 export interface ActionEstimates {

@@ -1,16 +1,24 @@
 """Acciones bajo demanda: lo único que gasta cuota de API-Football.
 
-Nada corre solo (no hay tareas programadas). La página lanza "actualizar"
-la primera vez que se abre cada mañana (desde AUTO_UPDATE_HOUR, hora de
-Colombia) y el resto con sus botones; daily.bat y settle.bat las lanzan a mano.
+Una sola consulta automática grande por día de cuota (la cuota se renueva a
+las 00:00 UTC, 19:00 en Colombia): "actualizar" la lanza la página la primera
+vez que se abre desde AUTO_UPDATE_HOUR (hora local) y hasta la renovación, si
+en ese día de cuota no se ha hecho ya (a mano o sola). Lo hace todo:
+resultados de los picks pendientes, partidos, cuotas, picks y la NBA. Los
+datos quedan guardados: entrar a la página solo los relee.
 
-  actualizar  partidos, cuotas y picks de hoy y mañana (~2 + 1 por partido con historial)
-  cuotas      cuotas de los partidos de las próximas 12 h y sus picks (1 por partido)
-  verificar   resultado + estadísticas de los partidos con picks y liquidación
-  completar   medición modelo-vs-casa e historial, con lo que sobre (deja reserva)
-  nba         apartado NBA: calendario, resultados, líneas de ESPN, picks y liquidación
-              (gratis: nba.com y ESPN; se lanza sola al abrir la pestaña si pasaron 3 h)
-  nba_cuotas  lo mismo + cuotas de Betano/Pinnacle de la API de baloncesto (su propia cuota)
+Lo demás, con sus botones. La única otra cosa automática: AUTO_VERIFY_MINUTES
+antes de la renovación, si quedan consultas y hay partidos jugados sin
+resultado, el backend lanza "verificar_auto" para gastar lo que sobra en
+dejar registrado si se ganó o se perdió (ver app/api/actions.py).
+
+  actualizar      resultados pendientes, partidos, cuotas y picks de hoy y mañana, y la NBA
+  cuotas          cuotas de los partidos de las próximas 12 h y sus picks (1 por partido)
+  verificar       resultado + estadísticas de los partidos con picks y liquidación
+  verificar_auto  lo mismo + los mercados evaluados, con lo que sobre antes de la renovación
+  completar       medición modelo-vs-casa e historial, con lo que sobre (deja reserva)
+  nba             apartado NBA: calendario, resultados, líneas de ESPN, picks y liquidación (gratis)
+  nba_cuotas      lo mismo + cuotas de Betano/Pinnacle de la API de baloncesto (su propia cuota)
 
 Cada acción corre en su propio proceso (la API la lanza y responde al
 instante) con el candado .daily_lock, y deja su progreso en
@@ -60,31 +68,54 @@ class Step:
 
 
 TITLES = {
-    "actualizar": "Actualizar partidos, cuotas y picks",
+    "actualizar": "Actualización del día (resultados, partidos, cuotas, picks y NBA)",
     "cuotas": f"Refrescar cuotas (próximas {DEFAULT_HOURS:g} h)",
     "verificar": "Verificar resultados de mis picks",
+    "verificar_auto": "Verificación automática antes de renovar la cuota",
     "completar": "Completar datos con lo que sobre",
     "nba": "Actualizar NBA",
     "nba_cuotas": "Cuotas Betano/Pinnacle (NBA)",
 }
 NBA_ACTIONS = ("nba", "nba_cuotas")
-NBA_AUTO_EVERY = timedelta(hours=3)   # gratis, pero sin repetir en cada visita
+
+
+def _nba_steps(apisports: bool) -> list[Step]:
+    from ml.nba.props import PROPS_PATH
+    from ml.nba.train import PARAMS_PATH
+    train = [] if PARAMS_PATH.exists() else [
+        Step("Entrenando y validando el modelo NBA (solo la primera vez, ~15 min)", "ml.nba.train", fatal=False)]
+    if not PROPS_PATH.exists():
+        train.append(Step("Entrenando y validando el modelo de jugadores (solo la primera vez)", "ml.nba.props", fatal=False))
+    return [
+        Step("NBA: historial (solo lo que falte)", "ml.nba.import_history", fatal=False),
+        *train,
+        Step("NBA: calendario, resultados, líneas y picks" + (" con Betano/Pinnacle" if apisports else ""),
+             "jobs.nba_update", ("--apisports",) if apisports else (), fatal=False),
+    ]
 
 
 def steps_for(action: str, today: date) -> list[Step]:
     hoy, manana = today.isoformat(), (today + timedelta(days=1)).isoformat()
     fresh = ("--fresh-hours", f"{FRESH_ODDS_HOURS:g}")
     if action == "actualizar":
-        # Los pasos de API no son fatales: si uno falla, los picks se generan
-        # igual con lo que haya en la base de datos.
+        # Lo hace todo (es la consulta grande del día). Los pasos de API no son
+        # fatales: si uno falla, los picks se generan igual con lo que haya.
+        # Primero los resultados de los picks pendientes (lo de anoche), con la
+        # reserva para el resto del día; la NBA al final (gratis salvo las
+        # cuotas de Betano/Pinnacle, que usan la cuota de baloncesto, aparte, y
+        # solo si hay partidos en las próximas 36 h).
         return [
+            Step("Resultados de los picks pendientes", "jobs.fetch_match_data", ("--tiers", "1"), fatal=False),
+            Step("Liquidando picks (y cuotas de cierre)", "jobs.settle_predictions", fatal=False),
             Step("Datos gratuitos de football-data (no gasta cuota)", "ml.ingestion.import_football_data_archive", fatal=False),
             Step("Partidos de hoy", "ml.ingestion.sync_fixtures", ("--date", hoy), fatal=False),
             Step("Partidos de mañana", "ml.ingestion.sync_fixtures", ("--date", manana), fatal=False),
             Step("Emparejando equipos con el histórico", "ml.ingestion.reconcile_teams", ("--apply",), fatal=False),
             Step("Cuotas de hoy", "ml.ingestion.sync_odds", ("--date", hoy, "--snapshot-type", "LIVE", *fresh), fatal=False),
             Step("Cuotas de mañana", "ml.ingestion.sync_odds", ("--date", manana, "--snapshot-type", "LIVE", *fresh), fatal=False),
-            Step("Generando los picks de hoy y mañana", "jobs.generate_daily_pick", ("--date", hoy, "--date", manana)),
+            Step("Generando los picks de hoy y mañana", "jobs.generate_daily_pick", ("--date", hoy, "--date", manana),
+                 fatal=False),
+            *_nba_steps(apisports=True),
         ]
     if action == "cuotas":
         return [Step("Cuotas de los próximos partidos y sus picks", "jobs.refresh_odds", ("--hours", f"{DEFAULT_HOURS:g}"))]
@@ -92,6 +123,15 @@ def steps_for(action: str, today: date) -> list[Step]:
         return [
             Step("Resultado y estadísticas de los partidos con picks", "jobs.fetch_match_data", ("--tiers", "1", "--reserve", "0")),
             Step("Liquidando picks (y cuotas de cierre)", "jobs.settle_predictions"),
+        ]
+    if action == "verificar_auto":
+        # Lo que sobra de la cuota antes de que se renueve (se perdería): primero
+        # los partidos con picks, luego los de mercados evaluados ("Modelo
+        # contra la casa"), y se liquida todo.
+        return [
+            Step("Resultados de los partidos con picks y mercados evaluados", "jobs.fetch_match_data",
+                 ("--tiers", "1,2", "--reserve", "0")),
+            Step("Liquidando picks y mercados (y cuotas de cierre)", "jobs.settle_predictions"),
         ]
     if action == "completar":
         # Primero la medición modelo-vs-casa (la prueba que decide qué
@@ -105,18 +145,7 @@ def steps_for(action: str, today: date) -> list[Step]:
             Step("Liquidando lo que llegó", "jobs.settle_predictions"),
         ]
     if action in NBA_ACTIONS:
-        from ml.nba.props import PROPS_PATH
-        from ml.nba.train import PARAMS_PATH
-        train = [] if PARAMS_PATH.exists() else [
-            Step("Entrenando y validando el modelo NBA (solo la primera vez, ~15 min)", "ml.nba.train")]
-        if not PROPS_PATH.exists():
-            train.append(Step("Entrenando y validando el modelo de jugadores (solo la primera vez)", "ml.nba.props"))
-        return [
-            Step("Historial de la NBA (solo lo que falte)", "ml.nba.import_history", fatal=False),
-            *train,
-            Step("Calendario, resultados, líneas y picks" + (" con Betano/Pinnacle" if action == "nba_cuotas" else ""),
-                 "jobs.nba_update", ("--apisports",) if action == "nba_cuotas" else ()),
-        ]
+        return _nba_steps(apisports=action == "nba_cuotas")
     raise ValueError(f"Acción desconocida: {action}")
 
 
@@ -222,34 +251,46 @@ def morning_start(now: datetime) -> datetime:
     return local.replace(hour=settings.auto_update_hour, minute=0, second=0, microsecond=0)
 
 
-def update_due(now: datetime) -> bool:
-    """¿Toca la actualización automática al abrir la página? Una vez cada
-    mañana: desde AUTO_UPDATE_HOUR (hora local) si desde esa hora de hoy no se
-    ha actualizado el día (a mano o sola), aunque la última haya fallado:
-    reintentar en cada visita gastaría la cuota a ciegas.
+def last_reset(now: datetime) -> datetime:
+    """Última renovación de la cuota (00:00 UTC): empieza el "día de cuota"."""
+    return datetime.combine(now.astimezone(timezone.utc).date(), datetime.min.time(), tzinfo=timezone.utc)
 
-    La cuota se renueva a las 19:00 de Colombia; con esto las consultas del día
-    se gastan por la mañana, no al renovarse (antes la página actualizaba la
-    primera vez que se abría después de las 19:00)."""
+
+def next_reset(now: datetime) -> datetime:
+    return last_reset(now) + timedelta(days=1)
+
+
+def update_due(now: datetime) -> bool:
+    """¿Toca la actualización automática al abrir la página? Una sola por día
+    de cuota: desde AUTO_UPDATE_HOUR (hora local) hasta la renovación (19:00
+    en Colombia), si desde la última renovación no se ha actualizado el día
+    (a mano o sola), aunque la última haya fallado: reintentar en cada visita
+    gastaría la cuota a ciegas.
+
+    Después de la renovación ya no se lanza sola aunque no se haya hecho: el
+    24/09 la de la mañana no pudo (cuota agotada) y se lanzó al entrar a las
+    19:30 con la cuota nueva; a la mañana siguiente tocó otra vez, y las dos
+    gastaron la misma cuota. Ahora la siguiente es la de la mañana, con la
+    cuota entera."""
     start = morning_start(now)
-    if now < start:
+    if now < start or start < last_reset(now):
         return False
     state = read_state()
     moments = [_parse_moment((state.get("last") or {}).get("actualizar", {}).get("finished_at")),
                _parse_moment(state.get("auto_attempted"))]
-    moments = [m for m in moments if m is not None]
-    return not moments or max(moments) < start
+    return not any(m is not None and m >= last_reset(now) for m in moments)
 
 
-def nba_update_due(now: datetime) -> bool:
-    """La actualización NBA gratuita toca al abrir la pestaña si la última
-    (manual o automática) terminó hace más de NBA_AUTO_EVERY."""
-    last = [(read_state().get("last") or {}).get(a, {}).get("finished_at") for a in NBA_ACTIONS]
-    last = [datetime.fromisoformat(t) for t in last if t]
-    attempted = read_state().get("nba_auto_attempted")
-    if attempted:
-        last.append(datetime.fromisoformat(attempted))
-    return not last or now - max(last) > NBA_AUTO_EVERY
+def auto_verify_window(now: datetime) -> bool:
+    """¿Estamos en los últimos AUTO_VERIFY_MINUTES antes de la renovación?"""
+    minutes = get_settings().auto_verify_minutes_before_reset
+    return minutes > 0 and next_reset(now) - timedelta(minutes=minutes) <= now < next_reset(now)
+
+
+def auto_verify_due(now: datetime) -> bool:
+    """Una vez por día de cuota, dentro de la ventana (lo demás, si quedan
+    consultas y hay algo que verificar, lo mira quien la lanza)."""
+    return auto_verify_window(now) and read_state().get("auto_verify_day") != last_reset(now).date().isoformat()
 
 
 # --- Ejecución --------------------------------------------------------------------
@@ -358,7 +399,8 @@ def estimates(db: Session, now: datetime) -> dict:
     return {
         "nba": {"requests": 0, "games": len(nba_games)},
         "nba_cuotas": {"requests": len(nba_todo) + len(nba_days), "games": len(nba_games)},
-        "actualizar": {"requests": 2 + odds_today_tomorrow, "approximate": True},
+        # + los resultados de los picks pendientes, que la actualización trae primero.
+        "actualizar": {"requests": 2 + odds_today_tomorrow + 2 * len(verify) + closing, "approximate": True},
         "cuotas": {"requests": len(upcoming_needing_odds(db, now, DEFAULT_HOURS))},
         # Cada partido: 1 para resultado + estadísticas y 1 para la cuota de cierre.
         "verificar": {"requests": 2 * len(verify) + closing, "matches": len(verify)},

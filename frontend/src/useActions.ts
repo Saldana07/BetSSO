@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getActionEstimates, getActionStatus, launchAction } from './api'
 import { isNba as isNbaScope } from './format'
-import type { ActionEstimates, ActionName, ActionResult, ActionStatus, Scope } from './types'
+import type { ActionEstimates, ActionName, ActionResult, ActionStatus, AnyActionName, Scope } from './types'
 
 const POLL_MS = 2500
 /** Por encima de esto se pide confirmación antes de gastar. */
@@ -15,15 +15,16 @@ export interface Actions {
   error: string | null
   autoStarted: boolean
   /** La última acción terminada de ESTE apartado (fútbol o NBA). */
-  latest: [ActionName, ActionResult] | undefined
+  latest: [AnyActionName, ActionResult] | undefined
   run: (action: ActionName) => void
 }
 
-/** Consultas a la API y las acciones que las gastan. Nada se consulta solo,
- *  salvo la actualización del día la primera vez que se abre la página cada
- *  mañana (desde las 6:00, AUTO_UPDATE_HOUR en backend/.env) y, en la NBA, su
- *  actualización gratuita si pasaron 3 horas. Solo se sondea el estado
- *  mientras algo corre. */
+/** Consultas a la API y las acciones que las gastan. Entrar a la página solo
+ *  relee la base de datos; lo único que se lanza solo es la actualización del
+ *  día (fútbol y NBA), UNA por día de cuota: la primera visita desde las 6:00
+ *  (AUTO_UPDATE_HOUR en backend/.env) y antes de las 19:00, cuando se renueva
+ *  la cuota. (La verificación de antes de la renovación la lanza el backend,
+ *  no la página.) Solo se sondea el estado mientras algo corre. */
 export function useActions(scope: Scope, onFinished: () => void): Actions {
   const isNba = isNbaScope(scope)
   const [status, setStatus] = useState<ActionStatus | null>(null)
@@ -69,10 +70,10 @@ export function useActions(scope: Scope, onFinished: () => void): Actions {
   useEffect(() => {
     refresh().then((s) => {
       if (!s || s.running) return
-      if (isNba ? s.nba_update_due : s.update_due) launch(isNba ? 'nba' : 'actualizar', true)
+      if (s.update_due) launch('actualizar', true)
     })
     getActionEstimates().then(setEstimates).catch(() => undefined)
-  }, [refresh, launch, isNba])
+  }, [refresh, launch])
 
   const running = status?.running ?? null
   useEffect(() => {
@@ -91,9 +92,12 @@ export function useActions(scope: Scope, onFinished: () => void): Actions {
     launch(action)
   }
 
+  // La actualización del día también trae la NBA: cuenta en los dos apartados.
+  const inThisSection = (a: AnyActionName) =>
+    a === 'actualizar' || (NBA_ACTIONS as AnyActionName[]).includes(a) === isNba
   const latest = status
-    ? (Object.entries(status.last) as [ActionName, ActionResult][])
-        .filter(([a]) => NBA_ACTIONS.includes(a) === isNba)
+    ? (Object.entries(status.last) as [AnyActionName, ActionResult][])
+        .filter(([a]) => inThisSection(a))
         .sort((a, b) => b[1].finished_at.localeCompare(a[1].finished_at))[0]
     : undefined
 

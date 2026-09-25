@@ -1,11 +1,23 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.actions import router as actions_router
+from app.api.actions import start_evening_verifier
 from app.api.nba import router as nba_router
 from app.api.predictions import router as predictions_router
 
-app = FastAPI(title="Football Value Betting API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Verificación automática antes de que se renueve la cuota (ver actions.py).
+    stop = start_evening_verifier()
+    yield
+    stop.set()
+
+
+app = FastAPI(title="Football Value Betting API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

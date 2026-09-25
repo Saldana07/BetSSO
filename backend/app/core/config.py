@@ -29,12 +29,15 @@ class Settings(BaseSettings):
     # con versión y contador propios, aparte de los mercados de equipo.
     nba_props_model_version: str = "nba-props-v1"
     nba_props_top_picks_count: int = 3
-    # Actualización del día automática: la primera vez que se abre la página
-    # cada mañana, desde esta hora local. (La cuota de la API se renueva a las
-    # 00:00 UTC = 19:00 en Colombia; eso no se puede cambiar, pero así las
-    # consultas del día se gastan por la mañana y no al renovarse.)
+    # Actualización del día automática: una por día de cuota, la primera vez
+    # que se abre la página desde esta hora local y hasta la renovación. (La
+    # cuota de la API se renueva a las 00:00 UTC = 19:00 en Colombia; eso no
+    # se puede cambiar, pero así las consultas del día se gastan por la mañana.)
     local_timezone: str = "America/Bogota"
     auto_update_hour: int = 6
+    # Minutos antes de la renovación en que el backend, si quedan consultas y
+    # hay partidos jugados sin resultado, los verifica solo (0 = nunca).
+    auto_verify_minutes_before_reset: int = 30
     top_picks_count: int = 5  # cuántos "picks del día" se muestran (top N por EV, máx. 1 por partido)
 
     # --- Guardas de suficiencia de datos (ver README: "apostar a ciegas") ---
