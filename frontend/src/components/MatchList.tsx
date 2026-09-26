@@ -10,6 +10,16 @@ function time(iso: string): string {
   return new Date(iso).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' })
 }
 
+/** Cuántos mercados analizó el modelo. En fútbol cuenta las evaluaciones, no
+ *  las cuotas guardadas: un partido con cuotas viejas (más de 6 h) no se
+ *  analiza, y antes aparecía con "61 mercados" como si lo estuviera. */
+function marketsLabel(m: MatchSummary, scope: Scope): string {
+  if (m.n_evaluated === 0) return m.status === 'SCHEDULED' ? 'sin analizar: faltan cuotas frescas' : 'sin analizar'
+  const n = m.n_evaluated ?? m.n_markets
+  if (scope === 'nba_players') return `${n} ${n === 1 ? 'línea' : 'líneas'}`
+  return `${n} ${n === 1 ? 'mercado' : 'mercados'}${m.n_evaluated != null ? ' analizados' : ''}`
+}
+
 /** Partidos del día: cada uno abre el análisis de todos sus mercados. */
 export function MatchList({ matches, scope, when, onOpen }: {
   matches: MatchSummary[]
@@ -48,7 +58,7 @@ export function MatchList({ matches, scope, when, onOpen }: {
                     {m.home_team} <span className="text-faint">vs</span> {m.away_team}
                   </span>
                   <span className="truncate text-xs text-muted">
-                    {m.league} · {m.n_markets} {scope === 'nba_players' ? (m.n_markets === 1 ? 'línea' : 'líneas') : m.n_markets === 1 ? 'mercado' : 'mercados'}
+                    {m.league} · {marketsLabel(m, scope)}
                   </span>
                 </span>
                 <span className="flex items-center gap-3">

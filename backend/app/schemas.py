@@ -95,6 +95,10 @@ class MatchSummary(BaseModel):
     league: str
     kickoff_utc: datetime
     n_markets: int          # mercados con cuota disponibles para analizar
+    # Mercados que el modelo analizó de verdad (evaluaciones). 0 = sin
+    # analizar: sus cuotas son viejas (más de max_odds_age_hours) o no hubo
+    # con qué. None donde no aplica (NBA).
+    n_evaluated: int | None = None
     has_pick: bool          # ¿alguno pasó el filtro estricto de picks del día?
     status: str = "SCHEDULED"
     final_score: str | None = None

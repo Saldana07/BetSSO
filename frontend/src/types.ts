@@ -99,6 +99,8 @@ export interface MatchSummary {
   league: string
   kickoff_utc: string
   n_markets: number
+  /** Mercados que el modelo analizó (fútbol). 0 = sin analizar (cuotas viejas). */
+  n_evaluated?: number | null
   has_pick: boolean
   status: string
   final_score: string | null

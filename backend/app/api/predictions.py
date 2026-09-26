@@ -256,7 +256,7 @@ def get_simulation(
 
 @router.get("/matches/today", response_model=list[MatchSummary])
 def get_todays_matches(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, scope: Scope = _SCOPE_QUERY,
-                       db: Session = Depends(get_db)):
+                       db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
     """Partidos del día (hoy por defecto) que tienen cuotas sincronizadas —
     es decir, los que pasaron el filtro de historial suficiente (sync_odds
     solo pide cuotas de esos). Son los partidos que se pueden analizar
@@ -281,10 +281,17 @@ def get_todays_matches(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY
         ).scalars().all()
     )
     rows = [(m, n) for m, n in rows if is_colombian(m) == (scope == "colombia")]
+    evaluated = dict(db.execute(
+        select(MarketEvaluation.match_id, func.count(MarketEvaluation.id))
+        .where(MarketEvaluation.match_id.in_([m.id for m, _ in rows]),
+               MarketEvaluation.model_version == _version(scope, settings))
+        .group_by(MarketEvaluation.match_id)
+    ).all()) if rows else {}
     return [
         MatchSummary(
             match_id=m.id, home_team=m.home_team.name, away_team=m.away_team.name,
-            league=m.league.name, kickoff_utc=m.kickoff_utc, n_markets=n, has_pick=m.id in picked,
+            league=m.league.name, kickoff_utc=m.kickoff_utc, n_markets=n, n_evaluated=evaluated.get(m.id, 0),
+            has_pick=m.id in picked,
             status=m.status,
             final_score=f"{m.home_goals}-{m.away_goals}" if m.status == "FINISHED" and m.home_goals is not None else None,
         )
