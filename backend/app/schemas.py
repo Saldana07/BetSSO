@@ -181,6 +181,7 @@ class ModelWeight(BaseModel):
     t_stat: float | None
     n_matches: int
     borrowed: bool              # sin muestra propia: usa el de Europa
+    model_only: bool = False    # sección de prueba: los picks siguen al modelo tal cual
 
 
 class ModelVsMarketResponse(BaseModel):

@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # (apartado aparte en la app; no suma a los contadores de Europa).
     colombia_model_version: str = "col-v1"
     colombia_top_picks_count: int = 3
+    # Colombia es la sección de prueba: sus picks siguen al modelo colombiano
+    # tal cual (sin mezclar con la casa), para que su contador lo mida a él.
+    # Europa usa el peso medido (ml/value_betting/blend.py). Decidido el 25/09.
+    colombia_model_only: bool = True
     # NBA: tablas, modelo, picks y contadores propios (apartado aparte; no suma
     # a los de fútbol). Ver ml/nba/.
     nba_model_version: str = "nba-v1"

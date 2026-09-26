@@ -117,6 +117,8 @@ def _latest_odds(db: Session, match_id: int, market: str) -> list[Odds]:
 def describe_weights(w: LiveWeights) -> str:
     """"peso del modelo 0.36 (57 partidos, t = 1.0); 1X2: 0 (la casa predice mejor)"."""
     p = w.pooled
+    if w.model_only:
+        return "el modelo tal cual (sección de prueba: su contador mide al modelo, sin mezclar con la casa)"
     head = (f"peso del modelo sobre la casa {w.default:.2f} "
             + ("(prestado de Europa: sin muestra propia)" if w.borrowed
                else f"({p.n_matches} partidos liquidados, t = {p.t:.1f})" if p.t is not None

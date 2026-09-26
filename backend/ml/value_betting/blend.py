@@ -49,6 +49,7 @@ class LiveWeights:
     by_family: dict[str, float] = field(default_factory=dict)
     source: dict[str, str] = field(default_factory=dict)      # familia -> "propio" | "conjunto" | "casa"
     borrowed: bool = False                                    # el peso viene de otro apartado
+    model_only: bool = False                                  # apartado de prueba: el modelo tal cual (w = 1)
 
     def weight(self, market: str) -> float:
         return self.by_family.get(market_family(market), self.default)
@@ -127,8 +128,11 @@ def settled_rows(db, model_version: str) -> list[EvaluationRow]:
 
 
 def load_live_weights(db, settings, model_version: str) -> LiveWeights:
-    """Pesos en vivo de un apartado; Colombia hereda los de Europa hasta tener
-    muestra propia."""
+    """Pesos en vivo de un apartado. Colombia, si `colombia_model_only`
+    (sección de prueba): el modelo tal cual, w = 1, con su peso medido solo
+    como dato; si no, hereda el de Europa hasta tener muestra propia."""
+    if model_version == settings.colombia_model_version and settings.colombia_model_only:
+        return LiveWeights(pooled=estimate(settled_rows(db, model_version)), default=1.0, model_only=True)
     europe = live_weights(settled_rows(db, settings.model_version))
     if model_version == settings.model_version:
         return europe

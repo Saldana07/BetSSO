@@ -193,7 +193,7 @@ export function PickTicket({ pick, scope, rank, variant = 'hero', onOpen }: {
                 ? 'Línea de jugador, a prueba: se mide contra lo que las demás casas consideran justo en esa misma línea. Su contador aparte dirá si sirve.'
                 : scope === 'nba'
                 ? 'Pick de la NBA: nace de que esta casa pague más que la cuota justa de Pinnacle, no de la opinión del modelo. Su contador aparte dirá si sirve.'
-                : 'Modelo propio del fútbol colombiano, aún sin validar: su probabilidad se mezcla con la de las demás casas y este pick es una prueba. Su contador aparte dirá si sirve.'}
+                : 'Modelo propio del fútbol colombiano, aún sin validar: este pick es su opinión, sin mezclar con la casa, y es una prueba. Su contador aparte dirá si sirve.'}
             </span>
           </div>
         )}
@@ -203,7 +203,7 @@ export function PickTicket({ pick, scope, rank, variant = 'hero', onOpen }: {
             {pick.kelly_fraction !== null && pick.kelly_fraction > 0 && (
               <span>Stake sugerido (¼ de Kelly): {(pick.kelly_fraction * 100).toFixed(1)}% del bank</span>
             )}
-            {(scope === 'europa' || scope === 'colombia') && (
+            {scope === 'europa' && (
               <span>Estimada = lo que pagan justo las demás casas, corrida hacia el modelo solo lo que los resultados le respaldan.</span>
             )}
             {scope === 'europa' && (

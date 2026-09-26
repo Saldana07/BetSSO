@@ -1522,6 +1522,14 @@ Con las dos cosas, sobre los 57 partidos ya medidos habrían salido 7 picks
 (antes 34): menos picks, y con una ventaja que los resultados respaldan.
 Ninguna de las dos cifras de ganancia se distingue todavía del azar.
 
+**Colombia sigue al modelo tal cual (25/09).** Con el peso prestado de Europa
+(0.24) el 25/09 ningún partido colombiano dio pick (con el modelo solo habrían
+sido 3), y el contador de Colombia, que es la sección de prueba, dejaba de
+medir al modelo colombiano. Ahora `COLOMBIA_MODEL_ONLY=true` (por defecto):
+sus picks son la opinión del modelo, sin mezclar, marcados EXPERIMENTAL; su
+"Modelo contra la casa" sigue midiendo si acierta más o menos que la casa.
+Europa mantiene el peso medido.
+
 **Corrección a la auditoría:** recomendaba pedir 20 partidos por consulta
 (`/fixtures?ids=`); el plan gratuito no lo permite ("Free plans do not have
 access"), como ya estaba anotado arriba. No se cambió.

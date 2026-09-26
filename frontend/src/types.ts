@@ -201,6 +201,8 @@ export interface ModelWeight {
   t_stat: number | null
   n_matches: number
   borrowed: boolean
+  /** Sección de prueba (Colombia): los picks siguen al modelo tal cual. */
+  model_only?: boolean
 }
 
 export interface ModelVsMarket {

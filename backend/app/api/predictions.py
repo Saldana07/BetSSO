@@ -466,7 +466,7 @@ def get_model_vs_market(scope: Scope = _SCOPE_QUERY, db: Session = Depends(get_d
     p = weights.pooled
     model_weight = ModelWeight(value=round(weights.default, 2), raw=round(p.w, 2),
                                t_stat=round(p.t, 2) if p.t is not None else None, n_matches=p.n_matches,
-                               borrowed=weights.borrowed)
+                               borrowed=weights.borrowed, model_only=weights.model_only)
     return ModelVsMarketResponse(evaluated=evaluated, settled=len(settled_rows), families=families,
                                  model_weight=model_weight)
 

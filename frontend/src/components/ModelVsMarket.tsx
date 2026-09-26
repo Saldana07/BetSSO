@@ -55,7 +55,7 @@ function Family({ f }: { f: ModelVsMarketFamily }) {
           error <span className="font-mono text-fg">{f.brier_model.toFixed(3)}</span> vs{' '}
           <span className="font-mono text-fg">{f.brier_market.toFixed(3)}</span>
         </span>
-        {f.weight != null && (
+        {f.weight != null && f.weight < 1 && (
           <span title="Cuánto se corre la probabilidad de la casa hacia la del modelo al decidir un pick">
             peso en los picks <span className="font-mono text-fg">{f.weight.toFixed(2).replace('.', ',')}</span>
             {f.weight_source === 'propio' ? ' (medido aparte)' : ''}
@@ -78,6 +78,17 @@ function Family({ f }: { f: ModelVsMarketFamily }) {
 /** Con qué peso entra el modelo en los picks: p = casa + peso · (modelo − casa). */
 function WeightNote({ w }: { w: ModelWeight }) {
   const value = w.value.toFixed(2).replace('.', ',')
+  if (w.model_only) {
+    return (
+      <div className="flex flex-col gap-1 rounded-2xl border border-ink-600 px-4 py-3.5 text-[13px] leading-relaxed text-fg-2">
+        <span>Picks: el modelo colombiano tal cual, sin mezclar con la casa.</span>
+        <span className="text-pretty text-muted">
+          Es la sección de prueba: su contador mide al modelo. Aquí abajo se ve si acierta más o menos que la casa en cada
+          tipo de mercado{w.n_matches >= 30 && w.t_stat !== null ? ` (peso medido hasta ahora: ${w.raw.toFixed(2).replace('.', ',')}, t = ${w.t_stat.toFixed(1).replace('.', ',')})` : ''}.
+        </span>
+      </div>
+    )
+  }
   return (
     <div className="flex flex-col gap-1 rounded-2xl border border-ink-600 px-4 py-3.5 text-[13px] leading-relaxed text-fg-2">
       <span>

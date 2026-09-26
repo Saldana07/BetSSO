@@ -115,3 +115,18 @@ def test_doble_oportunidad_se_mide_con_el_1x2():
     inv = {"H": 1 / 2.5, "D": 1 / 3.4, "A": 1 / 3.0}
     fair_1x = (inv["H"] + inv["D"]) / sum(inv.values())
     assert pick.model_probability == pytest.approx(fair_1x)
+
+
+def test_colombia_sigue_al_modelo_tal_cual(monkeypatch):
+    """Sección de prueba: w = 1, así su contador mide al modelo colombiano."""
+    from ml.value_betting import blend
+    monkeypatch.setattr(blend, "settled_rows", lambda db, v: _rows(0.3, n_matches=200))
+    settings = Settings(colombia_model_only=True)
+    w = blend.load_live_weights(None, settings, settings.colombia_model_version)
+    assert w.model_only and w.weight("OU_1.5") == 1.0 and w.weight("1X2") == 1.0
+    assert blended_probability(0.64, 0.77, w.weight("OU_1.5")) == pytest.approx(0.77)
+    assert blended_probability(None, 0.77, 1.0) == pytest.approx(0.77)   # doble oportunidad sin referencia
+    europa = blend.load_live_weights(None, settings, settings.model_version)
+    assert not europa.model_only and europa.default < 1
+    apagado = blend.load_live_weights(None, Settings(colombia_model_only=False), settings.colombia_model_version)
+    assert not apagado.model_only
