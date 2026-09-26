@@ -20,7 +20,7 @@ export function MatchList({ matches, scope, when, onOpen }: {
   return (
     <section aria-label={`Partidos de ${when}`} className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
-        <h3 className={heading}>{isNba(scope) ? `Partidos de la NBA de ${when}` : `Partidos de ${when} con análisis`}</h3>
+        <h3 className={heading}>{isNba(scope) ? `Partidos de la NBA de ${when}` : `Todos los análisis de ${when}`}</h3>
         <p className="m-0 text-[13px] text-faint">
           {scope === 'nba_players'
             ? 'Ábrelos para ver las líneas de jugadores evaluadas (puntos, rebotes, asistencias, triples y combinados).'

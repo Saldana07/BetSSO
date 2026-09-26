@@ -1472,6 +1472,13 @@ lateral pasa a una barra superior con los apartados. Horas y fechas en
 formato de Colombia ("7:30 p. m."), y las selecciones nombran al equipo
 ("Empate o Millonarios").
 
+Orden de la página (25/09, pedido del usuario): arriba solo los picks
+recomendados; debajo, "Todos los análisis" (cada partido abre todos sus
+mercados) y los demás candidatos; y al final, plegado, "Contador y pruebas
+del modelo" (resultado real, "Modelo contra la casa", datos y validaciones).
+La vista de hoy ya no muestra el adelanto del pick de mañana (se confundía
+con uno de hoy): está en la pestaña "Mañana".
+
 ## Picks mezclados con la casa y validación sin fuga (auditoría del 24/09)
 
 Una auditoría encontró dos fallos en cómo el fútbol decidía sus picks.

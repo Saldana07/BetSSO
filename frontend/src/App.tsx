@@ -18,7 +18,7 @@ import { MatchDetail, type MatchRef } from './components/MatchDetail'
 import { CandidatesTable, MatchList } from './components/MatchList'
 import { ModelVsMarket } from './components/ModelVsMarket'
 import { PickTicket } from './components/PickTicket'
-import { EmptyPicks, TomorrowCard } from './components/PicksExtras'
+import { EmptyPicks } from './components/PicksExtras'
 import { ColombiaCard, NbaDataCard, NbaPropsValidationCard, NbaSeasonCard, NbaValidationCard } from './components/Sections'
 import { MobileTopBar, Sidebar, type SectionMeta } from './components/Sidebar'
 import { CounterCard, KpiStrip } from './components/Stats'
@@ -74,7 +74,7 @@ function emptyBody(scope: Scope, offset: DayOffset, minConfidence: ConfidenceLev
     return 'Un pick de la NBA necesita que Betano o Bwin paguen más de lo justo (con «Cuotas Betano / Pinnacle»). Si no hay, es que el mercado está bien puesto: en la NBA pasa casi siempre.'
   if (offset === 1)
     return 'Las cuotas de mañana aún no están o ningún mercado validado tiene ventaja. Se traen con «Actualizar el día», que se hace sola la primera vez que abres la página cada mañana.'
-  return `Ningún partido de ${dayLabel(offset)} tiene equipos con historial suficiente y una cuota con ventaja creíble. El sistema prefiere no recomendar antes que recomendar a ciegas.`
+  return `Ningún partido de ${dayLabel(offset)} tiene equipos con historial suficiente y una cuota con ventaja creíble. El sistema prefiere no recomendar antes que recomendar a ciegas. Abajo están todos los partidos que analizó.`
 }
 
 function App() {
@@ -96,7 +96,6 @@ function App() {
     nba_players: null,
   })
   const [modelVsMarket, setModelVsMarket] = useState<ModelVsMarketData | null>(null)
-  const [tomorrowPick, setTomorrowPick] = useState<PickOfTheDay | null>(null)
   const [selected, setSelected] = useState<Selected | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -148,13 +147,6 @@ function App() {
       .then(setMatches)
       .catch(() => setMatches([]))
 
-    if (dayOffset === 0) {
-      getTopPicks(undefined, localDay(1), scope)
-        .then((picks) => setTomorrowPick(picks[0] ?? null))
-        .catch(() => setTomorrowPick(null))
-    } else {
-      setTomorrowPick(null)
-    }
   }, [refreshKey, confidence, day, dayOffset, scope])
 
   const changeScope = (next: Scope) => {
@@ -230,12 +222,9 @@ function App() {
 
           <ActionBar scope={scope} actions={actions} />
 
-          {isNba(scope) && <NbaSeasonCard status={nbaStatus} players={scope === 'nba_players'} />}
-
-          {perf && perf.settled_picks > 0 && <KpiStrip performance={perf} />}
-
-          <div className="grid items-start gap-7 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
-            <section aria-label={`${PICKS_HEADING[scope]} de ${when}`} className="flex min-w-0 flex-col gap-5">
+          {/* Arriba solo los picks recomendados; debajo, todos los análisis; y lo
+              demás (contador, pruebas del modelo, datos) plegado al final. */}
+          <section aria-label={`${PICKS_HEADING[scope]} de ${when}`} className="flex min-w-0 flex-col gap-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="m-0 text-xs font-semibold tracking-[0.12em] text-faint uppercase">
                   {PICKS_HEADING[scope]} de {when}
@@ -284,33 +273,50 @@ function App() {
                 />
               )}
 
-              {picksState.status === 'ready' &&
-                picksState.picks.map((pick, i) => (
-                  <PickTicket
-                    key={`${pick.match_id}-${pick.market}-${pick.selection}`}
-                    pick={pick}
-                    scope={scope}
-                    rank={i + 1}
-                    variant={i === 0 ? 'hero' : 'compact'}
-                    onOpen={() => openPick(pick)}
-                  />
-                ))}
-            </section>
-
-            <aside className="grid items-start gap-5 md:grid-cols-2 xl:grid-cols-1">
-              {(!perf || perf.settled_picks === 0) && <CounterCard scope={scope} performance={perf} />}
-              {tomorrowPick && <TomorrowCard pick={tomorrowPick} onSeeDay={() => setDayOffset(1)} />}
-              {scope === 'colombia' && <ColombiaCard status={colombiaStatus} />}
-              {isNba(scope) && <NbaDataCard status={nbaStatus} players={scope === 'nba_players'} />}
-              {modelVsMarket && <ModelVsMarket data={modelVsMarket} />}
-            </aside>
-          </div>
-
-          {scope === 'nba' && <NbaValidationCard v={nbaStatus?.validation ?? null} />}
-          {scope === 'nba_players' && <NbaPropsValidationCard v={nbaStatus?.props_validation ?? null} />}
+              {picksState.status === 'ready' && (
+                <div className="grid gap-5 xl:grid-cols-2">
+                  {picksState.picks.map((pick, i) => (
+                    <div key={`${pick.match_id}-${pick.market}-${pick.selection}`} className={i === 0 ? 'xl:col-span-2' : ''}>
+                      <PickTicket
+                        pick={pick}
+                        scope={scope}
+                        rank={i + 1}
+                        variant={i === 0 ? 'hero' : 'compact'}
+                        onOpen={() => openPick(pick)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+          </section>
 
           <MatchList matches={matches} scope={scope} when={when} onOpen={openMatch} />
           <CandidatesTable candidates={otherCandidates} when={when} />
+
+          <details className="group rounded-3xl border border-ink-600 bg-ink-900">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-6 py-4 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center gap-2.5 text-sm font-semibold text-fg-2">
+                <Icon name="chevronRight" size={18} className="text-faint transition-transform group-open:rotate-90" />
+                Contador y pruebas del modelo
+              </span>
+              {perf && (
+                <span className="text-xs text-faint">
+                  {perf.settled_picks} {perf.settled_picks === 1 ? 'pick liquidado' : 'picks liquidados'}
+                </span>
+              )}
+            </summary>
+            <div className="flex flex-col gap-5 px-4 pb-6 sm:px-6">
+              {isNba(scope) && <NbaSeasonCard status={nbaStatus} players={scope === 'nba_players'} />}
+              {perf && perf.settled_picks > 0 ? <KpiStrip performance={perf} /> : <CounterCard scope={scope} performance={perf} />}
+              <div className="grid items-start gap-5 lg:grid-cols-2">
+                {scope === 'colombia' && <ColombiaCard status={colombiaStatus} />}
+                {isNba(scope) && <NbaDataCard status={nbaStatus} players={scope === 'nba_players'} />}
+                {modelVsMarket && <ModelVsMarket data={modelVsMarket} />}
+              </div>
+              {scope === 'nba' && <NbaValidationCard v={nbaStatus?.validation ?? null} />}
+              {scope === 'nba_players' && <NbaPropsValidationCard v={nbaStatus?.props_validation ?? null} />}
+            </div>
+          </details>
         </main>
       </div>
 
