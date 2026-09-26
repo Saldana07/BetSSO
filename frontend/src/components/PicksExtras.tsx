@@ -7,12 +7,12 @@ export function EmptyPicks({ title, body, actions }: {
   actions: { label: string; onClick: () => void; primary?: boolean }[]
 }) {
   return (
-    <section className="flex min-h-96 flex-col justify-center gap-6 rounded-3xl border border-dashed border-ink-500 bg-ink-850 p-8 sm:p-10">
-      <div className="flex size-14 items-center justify-center rounded-2xl bg-ink-800 text-muted">
-        <Icon name="ticketOff" size={26} />
+    <section className="flex flex-col gap-5 rounded-3xl border border-dashed border-ink-500 bg-ink-850 p-6 sm:p-8">
+      <div className="flex size-11 items-center justify-center rounded-xl bg-ink-800 text-muted">
+        <Icon name="ticketOff" size={22} />
       </div>
       <div className="flex max-w-xl flex-col gap-2.5">
-        <h2 className="m-0 font-display text-3xl leading-tight font-extrabold tracking-tight sm:text-[34px]">{title}</h2>
+        <h2 className="m-0 font-display text-2xl leading-tight font-extrabold tracking-tight sm:text-3xl">{title}</h2>
         <p className="m-0 text-base leading-relaxed text-pretty text-muted">{body}</p>
       </div>
       {actions.length > 0 && (

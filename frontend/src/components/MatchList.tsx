@@ -40,11 +40,11 @@ export function MatchList({ matches, scope, when, onOpen }: {
               <button
                 type="button"
                 onClick={() => onOpen(m)}
-                className="grid w-full grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-ink-800 sm:px-6"
+                className="grid w-full grid-cols-[6.5rem_minmax(0,1fr)_auto] items-center gap-3 sm:gap-4 px-5 py-4 text-left transition-colors hover:bg-ink-800 sm:px-6"
               >
-                <span className="font-mono text-sm text-fg-2">{time(m.kickoff_utc)}</span>
+                <span className="font-mono text-sm whitespace-nowrap text-fg-2">{time(m.kickoff_utc)}</span>
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="truncate text-[15px] font-medium">
+                  <span className="text-[15px] leading-snug font-medium text-pretty">
                     {m.home_team} <span className="text-faint">vs</span> {m.away_team}
                   </span>
                   <span className="truncate text-xs text-muted">
