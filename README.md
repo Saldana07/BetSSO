@@ -1519,6 +1519,22 @@ Ninguna de las dos cifras de ganancia se distingue todavía del azar.
 (`/fixtures?ids=`); el plan gratuito no lo permite ("Free plans do not have
 access"), como ya estaba anotado arriba. No se cambió.
 
+## Un pick emitido no se borra (25/09)
+
+Rehacer los picks del día con cuotas nuevas ("Actualizar el día",
+"Refrescar cuotas") borraba y volvía a crear los de los partidos que aún no
+empezaban. Si con las cuotas nuevas (o con el peso nuevo del modelo) un pick
+ya no pasaba el filtro, desaparecía: así se fueron "Unión Magdalena o
+empate" (emitido la noche del 24, borrado la mañana del 25) y el de
+Chico-Pasto, que el usuario ya había visto. Además el contador solo contaba
+los picks que sobrevivían a cada repaso.
+
+Ahora ([picks.py](backend/ml/value_betting/picks.py)) lo emitido se queda tal
+cual se emitió (cuota y EV de ese momento) y se liquida como cualquier otro;
+el repaso solo rehace las evaluaciones y los candidatos, y los picks nuevos
+ocupan los cupos que queden, en partidos (y, en la NBA, jugadores) sin pick.
+Igual en fútbol, NBA equipos y NBA jugadores.
+
 ## Pendiente (próximos pasos)
 
 - **Backtest contra cuotas reales.** `Matches.csv` trae cuotas históricas de

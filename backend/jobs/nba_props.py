@@ -31,6 +31,7 @@ from ml.nba.sources import line_key
 from ml.nba.store import game_players, nickname, store_props, upsert_player_games
 from ml.value_betting.ev_kelly import evaluate_bet, is_safe_bet_candidate
 from ml.value_betting.market import fair_probabilities
+from ml.value_betting.picks import merge_with_issued
 
 settings = get_settings()
 PROB_RANGE = (0.2, 0.8)
@@ -151,8 +152,14 @@ def generate_props(db: Session, games: list[NbaGame], now: datetime, commit: boo
     version = settings.nba_props_model_version
     params, alphas, w = PropParams(**model["params"]), model["alphas"], float(model.get("w_live", 0.0))
     ids = [g.id for g in games]
-    for table in (NbaPrediction, NbaEvaluation):
-        db.execute(delete(table).where(table.game_id.in_(ids), table.model_version == version, table.settled_at.is_(None)))
+    # Los picks ya emitidos se quedan (ml/value_betting/picks.py).
+    issued = db.execute(select(NbaPrediction).where(
+        NbaPrediction.game_id.in_(ids), NbaPrediction.model_version == version,
+        NbaPrediction.is_pick_of_day.is_(True))).scalars().all()
+    db.execute(delete(NbaPrediction).where(NbaPrediction.game_id.in_(ids), NbaPrediction.model_version == version,
+                                           NbaPrediction.settled_at.is_(None), NbaPrediction.is_pick_of_day.is_(False)))
+    db.execute(delete(NbaEvaluation).where(NbaEvaluation.game_id.in_(ids), NbaEvaluation.model_version == version,
+                                           NbaEvaluation.settled_at.is_(None)))
     lines = latest_lines(db, ids)
     if not lines:
         if commit:
@@ -215,19 +222,11 @@ def generate_props(db: Session, games: list[NbaGame], now: datetime, commit: boo
                         expected_value=bet.expected_value, kelly_fraction=bet.kelly_fraction, is_pick_of_day=False,
                         generated_at=now,
                     ))
-    # Como máximo un pick por partido y por jugador.
-    chosen, games_used, players_used = [], set(), set()
-    for c in sorted(candidates, key=lambda c: -c.expected_value):
-        pid = parse_props_market(c.market)[0]
-        if c.game_id in games_used or pid in players_used:
-            continue
-        chosen.append(c)
-        games_used.add(c.game_id)
-        players_used.add(pid)
-        if len(chosen) >= settings.nba_props_top_picks_count:
-            break
-    for c in chosen:
-        c.is_pick_of_day = True
+    # Como máximo un pick por partido y por jugador (contando los ya emitidos).
+    candidates, chosen = merge_with_issued(
+        candidates, issued, settings.nba_props_top_picks_count,
+        lambda p: (p.game_id, p.market, p.selection),
+        lambda p: [("partido", p.game_id), ("jugador", parse_props_market(p.market)[0])])
     db.add_all(candidates)
     if commit:
         db.commit()

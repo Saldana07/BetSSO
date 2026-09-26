@@ -42,6 +42,7 @@ from ml.nba.store import ensure_tables, games_by_nicknames, nickname, store_odds
 from ml.nba.train import PARAMS_PATH
 from ml.value_betting.ev_kelly import evaluate_bet, is_safe_bet_candidate
 from ml.value_betting.market import fair_probabilities
+from ml.value_betting.picks import merge_with_issued
 from ml.value_betting.settlement import UnknownMarketError, bet_won, profit_loss
 from jobs import nba_props
 
@@ -173,10 +174,15 @@ def generate(db: Session, games: list[NbaGame], now: datetime, snapshot: str = "
         return "falta entrenar el modelo (python -m ml.nba.train)"
     version = settings.nba_model_version
     ids = [g.id for g in games]
-    # Idempotente: se rehacen los picks y evaluaciones sin liquidar de estos partidos.
-    for table in (NbaPrediction, NbaEvaluation):
-        db.execute(delete(table).where(table.game_id.in_(ids), table.model_version == version,
-                                       table.settled_at.is_(None)))
+    # Idempotente: se rehacen los candidatos y evaluaciones sin liquidar de
+    # estos partidos; los picks ya emitidos se quedan (ml/value_betting/picks.py).
+    issued = db.execute(select(NbaPrediction).where(
+        NbaPrediction.game_id.in_(ids), NbaPrediction.model_version == version,
+        NbaPrediction.is_pick_of_day.is_(True))).scalars().all()
+    db.execute(delete(NbaPrediction).where(NbaPrediction.game_id.in_(ids), NbaPrediction.model_version == version,
+                                           NbaPrediction.settled_at.is_(None), NbaPrediction.is_pick_of_day.is_(False)))
+    db.execute(delete(NbaEvaluation).where(NbaEvaluation.game_id.in_(ids), NbaEvaluation.model_version == version,
+                                           NbaEvaluation.settled_at.is_(None)))
     preds, _ = replay(load_games(db), Params(**model["params"]))
     pred = preds.set_index("id")
     odds = odds_by_game(db, ids, snapshot)
@@ -235,19 +241,16 @@ def generate(db: Session, games: list[NbaGame], now: datetime, snapshot: str = "
                         expected_value=bet.expected_value, kelly_fraction=bet.kelly_fraction,
                         is_pick_of_day=False, generated_at=now,
                     ))
-    best_per_game: dict[str, NbaPrediction] = {}
-    for c in candidates:
-        if c.game_id not in best_per_game or c.expected_value > best_per_game[c.game_id].expected_value:
-            best_per_game[c.game_id] = c
-    for c in sorted(best_per_game.values(), key=lambda c: -c.expected_value)[:settings.nba_top_picks_count]:
-        c.is_pick_of_day = True
+    candidates, chosen = merge_with_issued(
+        candidates, issued, settings.nba_top_picks_count,
+        lambda p: (p.game_id, p.market, p.selection), lambda p: [p.game_id])
     db.add_all(candidates)
     if commit:
         db.commit()
     else:
         db.flush()
-    n_picks = sum(c.is_pick_of_day for c in candidates)
-    return f"{n_eval} mercados evaluados, {len(candidates)} candidatos, {n_picks} picks"
+    kept = f" (+{len(issued)} ya emitidos, se mantienen)" if issued else ""
+    return f"{n_eval} mercados evaluados, {len(candidates)} candidatos, {len(chosen)} picks nuevos{kept}"
 
 
 def _closing_odds(db: Session, p: NbaPrediction) -> tuple[float, str] | None:

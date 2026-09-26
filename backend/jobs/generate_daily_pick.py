@@ -14,7 +14,8 @@ Flujo:
   5. Filtra por [odds_min, odds_max] y accuracy histórica del backtest
   6. Marca is_pick_of_day=True en el top N (settings.top_picks_count) por EV,
      tomando como máximo UN candidato por partido (para no llenar el top 5
-     con 5 mercados del mismo juego)
+     con 5 mercados del mismo juego). Los picks ya emitidos de estos partidos
+     no se borran ni se cambian (ml/value_betting/picks.py): ocupan su cupo.
 """
 from datetime import date, datetime, timedelta, timezone
 
@@ -29,6 +30,7 @@ from ml.features.colombia import is_colombian
 from ml.features.count_stats import ALL_SPECS
 from ml.value_betting.blend import LiveWeights, load_live_weights
 from ml.value_betting.confidence import SkillEvidence
+from ml.value_betting.picks import merge_with_issued
 
 settings = get_settings()
 
@@ -124,19 +126,8 @@ def describe_weights(w: LiveWeights) -> str:
     return head + ("; " + "; ".join(notes) if notes else "")
 
 
-def _select_top(candidates: list[Prediction], n: int) -> list[Prediction]:
-    """Como máximo un candidato por partido (el de mayor EV de ese partido),
-    para que el top N muestre partidos distintos en vez de varios mercados
-    del mismo juego. Los elegidos quedan marcados como pick del día."""
-    best_per_match: dict[int, Prediction] = {}
-    for c in candidates:
-        current = best_per_match.get(c.match_id)
-        if current is None or c.expected_value > current.expected_value:
-            best_per_match[c.match_id] = c
-    top = sorted(best_per_match.values(), key=lambda p: p.expected_value, reverse=True)[:n]
-    for pick in top:
-        pick.is_pick_of_day = True
-    return top
+def _pick_key(p: Prediction) -> tuple:
+    return p.match_id, p.model_version, p.market, p.selection
 
 
 def run(model_probabilities_fn, day: date | None = None, scope: str | None = None):
@@ -157,18 +148,21 @@ def run(model_probabilities_fn, day: date | None = None, scope: str | None = Non
             matches = [m for m in matches if not is_colombian(m)]
 
         # Idempotencia: si el job se corre más de una vez el mismo día (ej.
-        # las cuotas se movieron y se quiere recalcular), hay que limpiar las
-        # predicciones previas de estos partidos antes de reinsertar, o la
-        # restricción única (match, modelo, mercado, selección) revienta.
+        # las cuotas se movieron y se quiere recalcular), se rehacen las
+        # evaluaciones y los candidatos de estos partidos. Los picks ya
+        # emitidos NO: pudieron haberse apostado y el contador los necesita
+        # tal cual se emitieron (ver ml/value_betting/picks.py).
         match_ids = [m.id for m in matches]
+        versions = [settings.model_version, settings.colombia_model_version]
+        issued = db.execute(select(Prediction).where(
+            Prediction.match_id.in_(match_ids), Prediction.model_version.in_(versions),
+            Prediction.is_pick_of_day.is_(True))).scalars().all() if match_ids else []
         if match_ids:
-            for table in (Prediction.__table__, MarketEvaluation.__table__):
-                db.execute(
-                    table.delete().where(
-                        table.c.match_id.in_(match_ids),
-                        table.c.model_version.in_([settings.model_version, settings.colombia_model_version]),
-                    )
-                )
+            db.execute(Prediction.__table__.delete().where(
+                Prediction.match_id.in_(match_ids), Prediction.model_version.in_(versions),
+                Prediction.is_pick_of_day.is_(False)))
+            db.execute(MarketEvaluation.__table__.delete().where(
+                MarketEvaluation.match_id.in_(match_ids), MarketEvaluation.model_version.in_(versions)))
 
         # Dos apartados que no se mezclan: Europa (modelo validado) y Colombia
         # (modelo propio, picks experimentales con contador aparte).
@@ -218,19 +212,24 @@ def run(model_probabilities_fn, day: date | None = None, scope: str | None = Non
                 weight_for_market=weights[version].weight,
             )
             db.add_all(result.evaluations)
-            db.add_all(result.candidates)
             n_evaluations += len(result.evaluations)
             (colombia_candidates if colombian else candidates).extend(result.candidates)
 
-        db.flush()  # asigna IDs sin comitear aun
-
-        for label, pool, n in (("Europa", candidates, settings.top_picks_count),
-                               ("Colombia (experimental)", colombia_candidates, settings.colombia_top_picks_count)):
-            top_picks = _select_top(pool, n)
+        for label, pool, n, version in (
+            ("Europa", candidates, settings.top_picks_count, settings.model_version),
+            ("Colombia (experimental)", colombia_candidates, settings.colombia_top_picks_count, settings.colombia_model_version),
+        ):
+            kept = [p for p in issued if p.model_version == version]
+            to_store, top_picks = merge_with_issued(pool, kept, n, _pick_key, lambda p: [p.match_id])
+            db.add_all(to_store)
+            if kept:
+                print(f"{label}: {len(kept)} picks ya emitidos se mantienen tal cual:")
+                for p in kept:
+                    print(f"  = match={p.match_id} {p.market}/{p.selection} odds={p.bookmaker_odds} EV={p.expected_value:.3f}")
             if not top_picks:
-                print(f"{label}: no se encontraron candidatos que cumplan los criterios hoy.")
+                print(f"{label}: no se encontraron candidatos nuevos que cumplan los criterios hoy.")
                 continue
-            print(f"{label}: top {len(top_picks)} picks del día:")
+            print(f"{label}: {len(top_picks)} picks nuevos:")
             for i, p in enumerate(top_picks, 1):
                 print(f"  {i}. match={p.match_id} {p.market}/{p.selection} odds={p.bookmaker_odds} EV={p.expected_value:.3f}")
 
