@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 # Football Value Betting — Motor de "Apuesta Segura" Diaria
 
 ## Estructura del proyecto
