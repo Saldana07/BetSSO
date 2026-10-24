@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Football Value Betting — Motor de "Apuesta Segura" Diaria
 
 ## Estructura del proyecto
@@ -1570,3 +1571,6 @@ Igual en fútbol, NBA equipos y NBA jugadores.
   divergir de la BD real.
 - `elo_history` / `teams.elo_rating` nunca se escriben: el Elo se recalcula
   desde cero en cada predicción (O(n²); hoy ~3 s, se degradará con más ligas).
+=======
+# BetSSO
+>>>>>>> 57a560844baaf1830c9ffe2d25ae9dc0bfa545a8
