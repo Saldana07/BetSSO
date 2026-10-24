@@ -18,7 +18,7 @@ from app.core.config import Settings, get_settings
 from app.database import get_db
 from app.models import NbaEvaluation, NbaGame, NbaOdds, NbaPlayerGame, NbaPrediction
 from app.schemas import (
-    DailyCandidateResponse, MarketRow, MatchMarketsResponse, MatchSummary, ModelVsMarketFamily,
+    DailyCandidateResponse, MarketRow, MatchAnalysisSummary, MatchMarketsResponse, MatchSummary, ModelVsMarketFamily,
     ModelVsMarketResponse, NbaStatus, PerformanceResponse, PickOfTheDayResponse,
 )
 from ml.nba.dataset import MODEL_SEASON_TYPES
@@ -147,10 +147,87 @@ def games_of_day(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY, kind
     picked = set(db.execute(select(NbaPrediction.game_id).where(
         NbaPrediction.game_id.in_(ids), NbaPrediction.is_pick_of_day.is_(True),
         NbaPrediction.model_version == _version(kind, settings))).scalars())
+    version = _version(kind, settings)
+    preds_stmt = (
+        select(NbaPrediction)
+        .where(NbaPrediction.game_id.in_(ids), NbaPrediction.model_version == version)
+        .order_by(NbaPrediction.is_pick_of_day.desc(), NbaPrediction.expected_value.desc())
+    )
+    preds = db.execute(preds_stmt).scalars().all() if ids else []
+    top_pred_by_game: dict[str, NbaPrediction] = {}
+    for p in preds:
+        top_pred_by_game.setdefault(p.game_id, p)
+
+    missing_ids = [gid for gid in ids if gid not in top_pred_by_game]
+    top_eval_by_game: dict[str, NbaEvaluation] = {}
+    if missing_ids:
+        evals = db.execute(
+            select(NbaEvaluation)
+            .where(NbaEvaluation.game_id.in_(missing_ids), NbaEvaluation.model_version == version)
+        ).scalars().all()
+        for e in evals:
+            cur = top_eval_by_game.get(e.game_id)
+            if cur is None:
+                top_eval_by_game[e.game_id] = e
+            else:
+                e_key = (float(e.expected_value) < settings.min_pick_ev or float(e.expected_value) > settings.max_plausible_ev, -float(e.expected_value))
+                cur_key = (float(cur.expected_value) < settings.min_pick_ev or float(cur.expected_value) > settings.max_plausible_ev, -float(cur.expected_value))
+                if e_key < cur_key:
+                    top_eval_by_game[e.game_id] = e
+
+    all_markets = [p.market for p in top_pred_by_game.values()] + [e.market for e in top_eval_by_game.values()]
+    player_map = _names(db, all_markets)
+
+    def build_analysis(gid: str) -> MatchAnalysisSummary | None:
+        p = top_pred_by_game.get(gid)
+        if p is not None:
+            prop = parse_props_market(p.market) if kind == "player" else None
+            p_name = player_map.get(prop[0]) if prop else None
+            odds_val = float(p.bookmaker_odds)
+            return MatchAnalysisSummary(
+                market=p.market,
+                selection=p.selection,
+                bookmaker=p.bookmaker,
+                odds=odds_val,
+                model_probability=float(p.model_probability),
+                implied_probability=float(p.implied_probability),
+                expected_value=float(p.expected_value),
+                validation="VALIDADO",
+                is_recommended=bool(p.is_pick_of_day),
+                confidence_label=confidence_label(float(p.expected_value), SkillEvidence(None, None, None)),
+                is_settled=p.settled_at is not None,
+                is_win=p.is_win,
+                profit_loss=float(p.profit_loss) if p.profit_loss is not None else None,
+                player=p_name,
+            )
+        e = top_eval_by_game.get(gid)
+        if e is not None:
+            prop = parse_props_market(e.market) if kind == "player" else None
+            p_name = player_map.get(prop[0]) if prop else None
+            odds_val = float(e.best_odds)
+            return MatchAnalysisSummary(
+                market=e.market,
+                selection=e.selection,
+                bookmaker=e.best_bookmaker,
+                odds=odds_val,
+                model_probability=float(e.model_probability),
+                implied_probability=(1.0 / odds_val) if odds_val > 0 else 0.0,
+                expected_value=float(e.expected_value),
+                validation="SIN_VALIDAR",
+                is_recommended=False,
+                confidence_label=confidence_label(float(e.expected_value), SkillEvidence(None, None, None)),
+                is_settled=e.settled_at is not None,
+                is_win=e.is_win,
+                profit_loss=((odds_val - 1.0) if e.is_win else -1.0) if e.is_win is not None else None,
+                player=p_name,
+            )
+        return None
+
     return [MatchSummary(match_id=int(g.id), home_team=g.home_team.name, away_team=g.away_team.name,
                          league=LEAGUE_LABEL.get(g.season_type, "NBA"), kickoff_utc=g.tipoff_utc,
                          n_markets=n_markets.get(g.id, 0), has_pick=g.id in picked, status=g.status,
-                         final_score=_score(g))
+                         final_score=_score(g),
+                         top_analysis=build_analysis(g.id))
             for g in games]
 
 
@@ -216,19 +293,31 @@ def game_injuries(match_id: int, db: Session = Depends(get_db)):
 
 @router.get("/performance", response_model=PerformanceResponse)
 def performance(kind: Kind = _KIND, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
-    picks = db.execute(select(NbaPrediction).where(NbaPrediction.is_pick_of_day.is_(True),
-                                                    NbaPrediction.model_version == _version(kind, settings))
-                       ).scalars().all()
+    version = _version(kind, settings)
+    all_preds = db.execute(select(NbaPrediction).where(
+        NbaPrediction.model_version == version)
+    ).scalars().all()
     # Anuladas (el jugador no jugó): ni ganadas ni perdidas, fuera de la cuenta.
-    settled = [p for p in picks if p.settled_at is not None and p.is_win is not None]
-    picks = [p for p in picks if not (p.settled_at is not None and p.is_win is None)]
+    settled = [p for p in all_preds if p.settled_at is not None and p.is_win is not None]
+    valid_preds = [p for p in all_preds if not (p.settled_at is not None and p.is_win is None)]
     wins = sum(1 for p in settled if p.is_win)
     pnl = sum(float(p.profit_loss or 0) for p in settled)
-    clvs = [closing_line_value(float(p.bookmaker_odds), float(p.closing_odds)) for p in picks if p.closing_odds]
+    clvs = [closing_line_value(float(p.bookmaker_odds), float(p.closing_odds)) for p in valid_preds if p.closing_odds]
+
+    rec_settled = [p for p in settled if p.is_pick_of_day]
+    rec_wins = sum(1 for p in rec_settled if p.is_win)
+    rec_pnl = sum(float(p.profit_loss or 0) for p in rec_settled)
+
     return PerformanceResponse(
         settled_picks=len(settled), wins=wins, losses=len(settled) - wins,
         hit_rate=wins / len(settled) if settled else None, profit_loss_units=round(pnl, 3),
-        yield_pct=pnl / len(settled) * 100 if settled else None, pending_picks=len(picks) - len(settled),
+        yield_pct=pnl / len(settled) * 100 if settled else None, pending_picks=len(valid_preds) - len(settled),
+        recommended_settled=len(rec_settled),
+        recommended_wins=rec_wins,
+        recommended_losses=len(rec_settled) - rec_wins,
+        recommended_hit_rate=rec_wins / len(rec_settled) if rec_settled else None,
+        recommended_profit_loss=round(rec_pnl, 3),
+        recommended_yield_pct=rec_pnl / len(rec_settled) * 100 if rec_settled else None,
         clv_picks=len(clvs), avg_clv_pct=sum(clvs) / len(clvs) * 100 if clvs else None,
         positive_clv_rate=sum(c > 0 for c in clvs) / len(clvs) if clvs else None,
     )

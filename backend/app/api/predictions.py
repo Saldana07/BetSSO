@@ -3,7 +3,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -11,10 +11,11 @@ from app.database import get_db
 from app.models import Match, Prediction
 from app.models import BacktestResult, League, MarketEvaluation, Odds
 from app.schemas import (
+    ColombiaStatus,
     DailyCandidateResponse,
     MarketRow,
+    MatchAnalysisSummary,
     MatchMarketsResponse,
-    ColombiaStatus,
     MatchSummary,
     ModelVsMarketFamily,
     ModelVsMarketResponse,
@@ -144,29 +145,55 @@ def get_top_picks(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    """Devuelve el top N de 'apuestas seguras' del día (mayor EV dentro del
-    rango de cuota [odds_min, odds_max], como máximo un pick por partido),
-    ordenadas por EV descendente.
+    """Devuelve todas las selecciones elegibles del día, ordenadas por EV
+    descendente y con como máximo una selección por partido.
 
-    El job diario (jobs/generate_daily_pick.py) es responsable de poblar
-    `predictions` con `is_pick_of_day=True` para el top N; este endpoint
-    solo lee ese resultado precomputado (lectura rápida, sin recalcular el
-    modelo en el request).
+    Lee las selecciones calculadas por el job diario. Si encuentra un pick
+    emitido antiguo que ya no pasa los límites actuales, lo reemplaza para
+    mostrar por el mejor candidato vigente guardado para ese partido.
     """
     today_start, today_end = _day_bounds(day, tz)
 
+    eligible_candidate = and_(
+        Prediction.kelly_fraction.is_not(None),
+        Prediction.bookmaker_odds >= settings.odds_min,
+        Prediction.bookmaker_odds <= settings.odds_max,
+        Prediction.expected_value >= settings.min_pick_ev,
+        Prediction.expected_value <= settings.max_plausible_ev,
+    )
     stmt = (
         select(Prediction)
         .join(Match, Prediction.match_id == Match.id)
         .where(
-            Prediction.is_pick_of_day.is_(True),
             Prediction.model_version == _version(scope, settings),
             Match.kickoff_utc >= today_start,
             Match.kickoff_utc < today_end,
+            or_(
+                Prediction.is_pick_of_day.is_(True),
+                eligible_candidate,
+            ),
         )
-        .order_by(Prediction.expected_value.desc())
+        .order_by(Prediction.is_pick_of_day.desc(), Prediction.expected_value.desc())
     )
-    picks = db.execute(stmt).scalars().all()
+    stored = db.execute(stmt).scalars().all()
+    # Los picks emitidos se conservan en la BD para liquidación e historial.
+    # Sin embargo, versiones anteriores podían dejar marcado un pick fuera de
+    # cuota/EV. No lo presentamos como recomendación: en ese partido usamos el
+    # mejor candidato vigente que ya quedó guardado al generar el día.
+    eligible = [
+        p for p in stored
+        if p.kelly_fraction is not None
+        and settings.odds_min <= float(p.bookmaker_odds) <= settings.odds_max
+        and settings.min_pick_ev <= float(p.expected_value) <= settings.max_plausible_ev
+    ]
+    by_match: dict[int, Prediction] = {}
+    for p in eligible:
+        current = by_match.get(p.match_id)
+        if current is None or float(p.expected_value) > float(current.expected_value):
+            by_match[p.match_id] = p
+        elif float(p.expected_value) == float(current.expected_value) and p.is_pick_of_day:
+            by_match[p.match_id] = p
+    picks = sorted(by_match.values(), key=lambda p: float(p.expected_value), reverse=True)
     responses = [_to_response(p) for p in picks]
 
     if min_confidence is not None:
@@ -273,20 +300,130 @@ def get_todays_matches(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY
         .order_by(Match.kickoff_utc)
     ).all()
 
+    eligible_cond = and_(
+        Prediction.kelly_fraction.is_not(None),
+        Prediction.bookmaker_odds >= settings.odds_min,
+        Prediction.bookmaker_odds <= settings.odds_max,
+        Prediction.expected_value >= settings.min_pick_ev,
+        Prediction.expected_value <= settings.max_plausible_ev,
+    )
     picked = set(
         db.execute(
-            select(Prediction.match_id).where(Prediction.is_pick_of_day.is_(True))
+            select(Prediction.match_id)
             .join(Match, Prediction.match_id == Match.id)
-            .where(Match.kickoff_utc >= start, Match.kickoff_utc < end)
+            .where(
+                Match.kickoff_utc >= start, Match.kickoff_utc < end,
+                or_(Prediction.is_pick_of_day.is_(True), eligible_cond),
+            )
         ).scalars().all()
     )
     rows = [(m, n) for m, n in rows if is_colombian(m) == (scope == "colombia")]
+    match_ids = [m.id for m, _ in rows]
+    version = _version(scope, settings)
+
+    preds_stmt = (
+        select(Prediction)
+        .where(Prediction.match_id.in_(match_ids), Prediction.model_version == version)
+        .order_by(Prediction.is_pick_of_day.desc(), Prediction.expected_value.desc())
+    )
+    preds = db.execute(preds_stmt).scalars().all() if match_ids else []
+    top_pred_by_match: dict[int, Prediction] = {}
+    for p in preds:
+        top_pred_by_match.setdefault(p.match_id, p)
+
+    evaluations_by_key: dict[tuple[int, str, str], MarketEvaluation] = {}
+    if match_ids:
+        evals = db.execute(
+            select(MarketEvaluation)
+            .where(MarketEvaluation.match_id.in_(match_ids), MarketEvaluation.model_version == version)
+        ).scalars().all()
+        for e in evals:
+            evaluations_by_key[(e.match_id, e.market, e.selection)] = e
+
     evaluated = dict(db.execute(
         select(MarketEvaluation.match_id, func.count(MarketEvaluation.id))
-        .where(MarketEvaluation.match_id.in_([m.id for m, _ in rows]),
-               MarketEvaluation.model_version == _version(scope, settings))
+        .where(MarketEvaluation.match_id.in_(match_ids),
+               MarketEvaluation.model_version == version)
         .group_by(MarketEvaluation.match_id)
-    ).all()) if rows else {}
+    ).all()) if match_ids else {}
+
+    def build_analysis(m_id: int) -> MatchAnalysisSummary | None:
+        # Si el partido ya tiene un pick emitido o candidato oficial en Prediction,
+        # lo usamos directamente para que la tarjeta coincida 100% con los picks recomendados.
+        p = top_pred_by_match.get(m_id)
+        if p is not None:
+            odds_val = float(p.bookmaker_odds)
+            skill = float(p.historical_skill) if p.historical_skill is not None else None
+            validation = (
+                "VALIDADO" if (skill is not None and skill >= settings.min_historical_skill)
+                else ("SIN_VENTAJA" if skill is not None else ("VALIDADO" if (scope == "colombia" and p.is_pick_of_day) else "SIN_VALIDAR"))
+            )
+            is_rec = bool(
+                p.is_pick_of_day or (
+                    p.kelly_fraction is not None
+                    and settings.odds_min <= odds_val <= settings.odds_max
+                    and settings.min_pick_ev <= float(p.expected_value) <= settings.max_plausible_ev
+                )
+            )
+            return MatchAnalysisSummary(
+                market=p.market,
+                selection=p.selection,
+                bookmaker=p.bookmaker,
+                odds=odds_val,
+                model_probability=float(p.model_probability),
+                implied_probability=float(p.implied_probability),
+                expected_value=float(p.expected_value),
+                validation=validation,
+                is_recommended=is_rec,
+                confidence_label=confidence_label(
+                    float(p.expected_value),
+                    SkillEvidence(
+                        accuracy=float(p.historical_accuracy) if p.historical_accuracy is not None else None,
+                        base_accuracy=(
+                            float(p.historical_accuracy) - float(p.historical_skill)
+                            if p.historical_accuracy is not None and p.historical_skill is not None
+                            else None
+                        ),
+                        n_bets=p.backtest_n_bets,
+                    ),
+                ),
+                is_settled=p.settled_at is not None,
+                is_win=p.is_win,
+                profit_loss=float(p.profit_loss) if p.profit_loss is not None else None,
+            )
+
+        # Si no hay pick en Prediction, buscamos en vivo la mejor opción evaluada
+        try:
+            markets = get_match_markets(m_id, db, settings)
+        except HTTPException:
+            return None
+        in_range = [r for r in markets.rows if r.in_odds_range]
+        if not in_range:
+            return None
+        best = in_range[0]  # get_match_markets aplica el orden del modal
+        if best.expected_value < settings.min_pick_ev or best.ev_suspicious:
+            return None
+        e = evaluations_by_key.get((m_id, best.market, best.selection))
+        odds_val = float(best.odds)
+        return MatchAnalysisSummary(
+            market=best.market,
+            selection=best.selection,
+            bookmaker=best.bookmaker,
+            odds=odds_val,
+            model_probability=float(best.model_probability),
+            implied_probability=float(best.implied_probability),
+            expected_value=float(best.expected_value),
+            validation=best.validation,
+            is_recommended=False,
+            confidence_label=confidence_label(float(best.expected_value), SkillEvidence(None, None, None)),
+            is_settled=e.settled_at is not None if e else False,
+            is_win=e.is_win if e else None,
+            profit_loss=(
+                ((odds_val - 1.0) if e.is_win else -1.0)
+                if e and e.is_win is not None else None
+            ),
+        )
+
     return [
         MatchSummary(
             match_id=m.id, home_team=m.home_team.name, away_team=m.away_team.name,
@@ -294,6 +431,7 @@ def get_todays_matches(day: date | None = _DAY_QUERY, tz: str | None = _TZ_QUERY
             has_pick=m.id in picked,
             status=m.status,
             final_score=f"{m.home_goals}-{m.away_goals}" if m.status == "FINISHED" and m.home_goals is not None else None,
+            top_analysis=build_analysis(m.id),
         )
         for m, n in rows
     ]
@@ -316,6 +454,7 @@ def get_match_markets(
     if match is None:
         raise HTTPException(status_code=404, detail="Partido no encontrado.")
 
+    version = settings.colombia_model_version if is_colombian(match) else settings.model_version
     probs = predict_match_probabilities(db, match, get_models(model_version=settings.model_version))
     diagnostics = probs.get("_diagnostics", {})
 
@@ -480,28 +619,40 @@ def get_performance(scope: Scope = _SCOPE_QUERY, db: Session = Depends(get_db),
     verdad pasó con los picks que el sistema emitió. Es la única métrica que
     responde "¿esto gana dinero?". La llena jobs/settle_predictions.py.
     """
+    version = _version(scope, settings)
     settled = db.execute(
         select(
             func.count(Prediction.id),
             func.count(Prediction.id).filter(Prediction.is_win.is_(True)),
             func.coalesce(func.sum(Prediction.profit_loss), 0),
-        ).where(Prediction.is_pick_of_day.is_(True), Prediction.settled_at.isnot(None),
-                Prediction.model_version == _version(scope, settings))
+        ).where(Prediction.settled_at.isnot(None),
+                Prediction.model_version == version)
     ).one()
 
     total, wins, pnl = settled[0], settled[1], float(settled[2])
 
+    rec_settled = db.execute(
+        select(
+            func.count(Prediction.id),
+            func.count(Prediction.id).filter(Prediction.is_win.is_(True)),
+            func.coalesce(func.sum(Prediction.profit_loss), 0),
+        ).where(Prediction.is_pick_of_day.is_(True), Prediction.settled_at.isnot(None),
+                Prediction.model_version == version)
+    ).one()
+
+    rec_total, rec_wins, rec_pnl = rec_settled[0], rec_settled[1], float(rec_settled[2])
+
     pending = db.execute(
         select(func.count(Prediction.id)).where(
-            Prediction.is_pick_of_day.is_(True), Prediction.settled_at.is_(None),
-            Prediction.model_version == _version(scope, settings),
+            Prediction.settled_at.is_(None),
+            Prediction.model_version == version,
         )
     ).scalar_one()
 
     clv_rows = db.execute(
         select(Prediction.bookmaker_odds, Prediction.closing_odds).where(
-            Prediction.is_pick_of_day.is_(True), Prediction.closing_odds.isnot(None),
-            Prediction.model_version == _version(scope, settings),
+            Prediction.closing_odds.isnot(None),
+            Prediction.model_version == version,
         )
     ).all()
     clvs = [closing_line_value(float(taken), float(closing)) for taken, closing in clv_rows]
@@ -518,6 +669,12 @@ def get_performance(scope: Scope = _SCOPE_QUERY, db: Session = Depends(get_db),
         # Yield a stake plano de 1 unidad: P&L total / unidades arriesgadas.
         yield_pct=(pnl / total * 100) if total else None,
         pending_picks=pending,
+        recommended_settled=rec_total,
+        recommended_wins=rec_wins,
+        recommended_losses=rec_total - rec_wins,
+        recommended_hit_rate=(rec_wins / rec_total) if rec_total else None,
+        recommended_profit_loss=round(rec_pnl, 3),
+        recommended_yield_pct=(rec_pnl / rec_total * 100) if rec_total else None,
     )
 
 
@@ -545,6 +702,8 @@ def get_daily_candidates(
             Prediction.bookmaker_odds >= settings.odds_min,
             Prediction.bookmaker_odds <= settings.odds_max,
             Prediction.expected_value >= settings.min_pick_ev,
+            Prediction.expected_value <= settings.max_plausible_ev,
+            Prediction.kelly_fraction.is_not(None),
             Match.kickoff_utc >= today_start,
             Match.kickoff_utc < today_end,
         )

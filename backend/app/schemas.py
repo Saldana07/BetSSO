@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class PickOfTheDayResponse(BaseModel):
@@ -88,6 +88,23 @@ class SimulationResponse(BaseModel):
     conclusion: str
 
 
+class MatchAnalysisSummary(BaseModel):
+    market: str
+    selection: str
+    bookmaker: str | None = None
+    odds: float
+    model_probability: float
+    implied_probability: float
+    expected_value: float
+    validation: str = "SIN_VALIDAR"
+    is_recommended: bool = False
+    confidence_label: str = "BAJA"
+    is_settled: bool = False
+    is_win: bool | None = None
+    profit_loss: float | None = None
+    player: str | None = None
+
+
 class MatchSummary(BaseModel):
     match_id: int
     home_team: str
@@ -102,6 +119,18 @@ class MatchSummary(BaseModel):
     has_pick: bool          # ¿alguno pasó el filtro estricto de picks del día?
     status: str = "SCHEDULED"
     final_score: str | None = None
+    top_analysis: MatchAnalysisSummary | None = None
+    mercadoFavorable: MatchAnalysisSummary | None = None
+    mercado_favorable: MatchAnalysisSummary | None = None
+
+    @model_validator(mode="after")
+    def sync_mercado_favorable(self) -> "MatchSummary":
+        fav = self.top_analysis or self.mercadoFavorable or self.mercado_favorable
+        if fav:
+            self.top_analysis = fav
+            self.mercadoFavorable = fav
+            self.mercado_favorable = fav
+        return self
 
 
 
@@ -146,6 +175,13 @@ class PerformanceResponse(BaseModel):
     profit_loss_units: float
     yield_pct: float | None
     pending_picks: int
+    # Desglose de los picks marcados como recomendados:
+    recommended_settled: int | None = None
+    recommended_wins: int | None = None
+    recommended_losses: int | None = None
+    recommended_hit_rate: float | None = None
+    recommended_profit_loss: float | None = None
+    recommended_yield_pct: float | None = None
     # Closing Line Value: la medida profesional de ventaja. Converge mucho
     # antes que el P&L porque no depende de acertar el partido, solo de haber
     # tomado un precio mejor que el de cierre. Medido contra la misma casa.

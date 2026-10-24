@@ -34,6 +34,8 @@ def merge_with_issued(
     blocked = {k for p in issued for k in group_keys(p)}
     chosen: list[P] = []
     for c in sorted(to_store, key=lambda c: -float(c.expected_value)):
+        if getattr(c, "kelly_fraction", 1) is None:
+            continue
         if len(issued) + len(chosen) >= n:
             break
         keys = set(group_keys(c))

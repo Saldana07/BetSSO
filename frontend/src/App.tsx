@@ -174,7 +174,10 @@ function App() {
   }, [])
 
   const openPick = (pick: PickOfTheDay) => setSelected({ match: pick, pick })
-  const openMatch = (m: MatchSummary) => setSelected({ match: m })
+  const openMatch = (m: MatchSummary) => {
+    const pick = picksState.status === 'ready' ? picksState.picks.find((p) => p.match_id === m.match_id) : undefined
+    setSelected({ match: m, pick })
+  }
 
   const topPickKeys = new Set(
     picksState.status === 'ready' ? picksState.picks.map((p) => `${p.match_id}-${p.market}-${p.selection}`) : [],
@@ -187,8 +190,8 @@ function App() {
     ? { text: new Date(nbaStart).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) }
     : null
   const meta: Record<Scope, SectionMeta | null> = {
-    europa: performances.europa ? { text: String(performances.europa.settled_picks), mono: true } : null,
-    colombia: performances.colombia ? { text: String(performances.colombia.settled_picks + performances.colombia.pending_picks), mono: true } : null,
+    europa: performances.europa ? { text: String(performances.europa.recommended_settled ?? performances.europa.settled_picks), mono: true } : null,
+    colombia: performances.colombia ? { text: String((performances.colombia.recommended_settled ?? performances.colombia.settled_picks) + performances.colombia.pending_picks), mono: true } : null,
     nba: seasonMeta ?? (performances.nba ? { text: String(performances.nba.settled_picks), mono: true } : null),
     nba_players: seasonMeta ?? (performances.nba_players ? { text: String(performances.nba_players.settled_picks), mono: true } : null),
   }
@@ -266,11 +269,32 @@ function App() {
               )}
 
               {picksState.status === 'empty' && (
-                <EmptyPicks
-                  title={emptyTitle(scope, dayOffset, confidence ? minConfidence : null)}
-                  body={emptyBody(scope, dayOffset, confidence ? minConfidence : null)}
-                  actions={emptyActions}
-                />
+                matches.length > 0 ? (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-2xl border border-ink-600 bg-ink-850 px-5 py-4 text-xs sm:text-sm">
+                    <span className="flex items-center gap-2.5 text-fg-2">
+                      <span className="flex size-6 items-center justify-center rounded-full bg-lime/10 text-lime font-bold text-xs shrink-0">i</span>
+                      {scope === 'colombia'
+                        ? `Hoy no hay picks con los filtros más estrictos, pero abajo tienes ${matches.length} partidos colombianos analizados con sus mejores mercados y recomendaciones señaladas.`
+                        : `Hoy ningún mercado pasó el filtro ultra estricto de pick del día, pero abajo tienes ${matches.length} partidos analizados con sus mejores opciones señaladas.`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const el = document.querySelector('section[aria-label^="Partidos de"]')
+                        el?.scrollIntoView({ behavior: 'smooth' })
+                      }}
+                      className="rounded-xl bg-ink-700 px-3.5 py-1.5 text-xs font-semibold text-fg hover:bg-ink-600 transition-colors shrink-0 whitespace-nowrap"
+                    >
+                      Ver análisis de hoy ({matches.length})
+                    </button>
+                  </div>
+                ) : (
+                  <EmptyPicks
+                    title={emptyTitle(scope, dayOffset, confidence ? minConfidence : null)}
+                    body={emptyBody(scope, dayOffset, confidence ? minConfidence : null)}
+                    actions={emptyActions}
+                  />
+                )
               )}
 
               {picksState.status === 'ready' && (
@@ -301,7 +325,7 @@ function App() {
               </span>
               {perf && (
                 <span className="text-xs text-faint">
-                  {perf.settled_picks} {perf.settled_picks === 1 ? 'pick liquidado' : 'picks liquidados'}
+                  {perf.recommended_settled ?? perf.settled_picks} {(perf.recommended_settled ?? perf.settled_picks) === 1 ? 'pick liquidado' : 'picks liquidados'}
                 </span>
               )}
             </summary>

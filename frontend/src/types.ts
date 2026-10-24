@@ -45,6 +45,12 @@ export interface Performance {
   profit_loss_units: number
   yield_pct: number | null
   pending_picks: number
+  recommended_settled?: number | null
+  recommended_wins?: number | null
+  recommended_losses?: number | null
+  recommended_hit_rate?: number | null
+  recommended_profit_loss?: number | null
+  recommended_yield_pct?: number | null
   /** Closing Line Value: picks con cuota de cierre, CLV medio (%) y % con CLV positivo. */
   clv_picks: number
   avg_clv_pct: number | null
@@ -92,6 +98,23 @@ export interface Simulation {
   conclusion: string
 }
 
+export interface MatchAnalysisSummary {
+  market: string
+  selection: string
+  bookmaker: string | null
+  odds: number
+  model_probability: number
+  implied_probability: number
+  expected_value: number
+  validation: Validation
+  is_recommended: boolean
+  confidence_label: ConfidenceLevel
+  is_settled: boolean
+  is_win: boolean | null
+  profit_loss: number | null
+  player?: string | null
+}
+
 export interface MatchSummary {
   match_id: number
   home_team: string
@@ -104,6 +127,9 @@ export interface MatchSummary {
   has_pick: boolean
   status: string
   final_score: string | null
+  top_analysis?: MatchAnalysisSummary | null
+  mercadoFavorable?: MatchAnalysisSummary | null
+  mercado_favorable?: MatchAnalysisSummary | null
 }
 
 export type Validation = 'VALIDADO' | 'SIN_VALIDAR' | 'SIN_VENTAJA'
